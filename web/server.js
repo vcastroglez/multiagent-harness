@@ -61,6 +61,7 @@ const MAX_PROMPT_BODY = 24 * 1024 * 1024;
 const SESSIONS_FILE = path.join(STATE, 'sessions.json');
 const TASKS_FILE = path.join(STATE, 'tasks.md');
 const TASKS_ARCHIVE = path.join(STATE, 'tasks-archive');
+const ROLE_MODELS_FILE = path.join(HARNESS, 'role-models.json');
 const EMPTY_TASKS = `# Task queue
 
 One task per agent. Backend first when the frontend depends on it.
@@ -434,9 +435,13 @@ class AgentStreamer {
 
 // Roles can share a cwd (backender and reviewer both audit the api checkout),
 // so a known tab label wins and cwd is only the fallback.
+// Agents added later (create-agent.sh) carry a purpose-based name as their tab label;
+// show that name instead of collapsing them all to 'other'.
+const AGENT_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 function roleForPane(pane, tabs) {
   const label = String((tabs || []).find((t) => t.tab_id === pane.tab_id)?.label || '').toLowerCase();
   if (ROLES.has(label)) return label;
+  if (AGENT_NAME_RE.test(label)) return label;
   return pane.cwd === API ? 'backender' : pane.cwd === CLIENT ? 'frontender' : pane.cwd === BASE ? 'coordinator' : 'other';
 }
 
@@ -489,7 +494,27 @@ async function resetAgentPane(pane) {
     const live = streamers.get(pane);
     if (live) live.markReset();
     setTimeout(() => { const s = streamers.get(pane); if (s) s.refreshPath(); }, 1200);
-    return { status: 'reset' };
+
+    // A fresh pi session starts from the process defaults; put the role's
+    // predefined model back. The role-model extension also does this on
+    // session_start, but this keeps resets correct even without the extension.
+    await new Promise((r) => setTimeout(r, 300));
+    const tabs = await herdrJson(['tab', 'list']);
+    const role = roleForPane(info.pane, tabs.tabs || []);
+    const wanted = roleModelFor(role);
+    let model = null;
+    let modelError = null;
+    if (wanted) {
+      const current = await paneModel(pane);
+      if (modelSpecMatches(wanted, current.model)) {
+        model = current.model;
+      } else {
+        const switched = await switchPaneModel(pane, wanted);
+        if (switched.ok) model = switched.model || wanted;
+        else modelError = switched.error || 'could not apply the role model';
+      }
+    }
+    return { status: 'reset', role, model, model_error: modelError };
   } finally {
     resettingPanes.delete(pane);
   }
@@ -869,11 +894,133 @@ function clearTaskQueue() {
   return archived;
 }
 
+// PI prints its session stats in the footer: token counters, cost and context usage.
+// Parse the values the dashboard shows, preserving PI's own formatting.
+function paneFooterStats(output) {
+  const lines = String(output || '').split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    const context = line.match(/((?:\d+(?:\.\d+)?%|\?)\/[\d.]+[kKmM]?(?:\s+\(auto\))?)/);
+    if (!context) continue;
+    const cost = line.match(/\$\d+(?:\.\d+)?(?:\s*\(sub\))?/);
+    return { context: context[1], cost: cost ? cost[0] : '$0.000' };
+  }
+  return { context: null, cost: null };
+}
+
 async function paneModel(pane) {
   const r = await run(HERDR, ['agent', 'read', pane, '--source', 'visible', '--lines', '6'], { timeout: 5000 });
-  if (!r.ok) return { model: null, thinking: null };
+  if (!r.ok) return { model: null, thinking: null, context: null, cost: null };
   const m = r.stdout.match(/([A-Za-z0-9._/-]+)\s+•\s+(off|minimal|low|medium|high|xhigh|max)\b/);
-  return m ? { model: m[1], thinking: m[2] } : { model: null, thinking: null };
+  return {
+    model: m ? m[1] : null,
+    thinking: m ? m[2] : null,
+    ...paneFooterStats(r.stdout),
+  };
+}
+
+// ---------- per-role predefined models ----------
+// role-models.json is shared with bootstrap.sh, create-agent.sh and
+// pi-extensions/role-model.ts. The dashboard writes it when a model is picked,
+// so the choice becomes the role default that survives /new.
+function readRoleModels() {
+  try {
+    const doc = JSON.parse(fs.readFileSync(ROLE_MODELS_FILE, 'utf8'));
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return { models: {} };
+    if (!doc.models || typeof doc.models !== 'object' || Array.isArray(doc.models)) doc.models = {};
+    return doc;
+  } catch {
+    return { models: {} };
+  }
+}
+
+function writeRoleModels(doc) {
+  const tmp = `${ROLE_MODELS_FILE}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o644 });
+  fs.renameSync(tmp, ROLE_MODELS_FILE);
+}
+
+function readMemoryDoc() {
+  try { return JSON.parse(fs.readFileSync(path.join(STATE, 'memory.json'), 'utf8')); } catch { return {}; }
+}
+
+function roleModelFor(role, roleModels = readRoleModels(), memory = readMemoryDoc()) {
+  if (!role || role === 'other') return null;
+  const explicit = roleModels.models && roleModels.models[role];
+  if (typeof explicit === 'string' && explicit.trim()) return explicit.trim();
+  // `default` is only for agents already registered in memory.json, so unrelated
+  // herdr tabs are never dragged onto the multiagent default model.
+  if (typeof roleModels.default === 'string' && roleModels.default.trim()
+      && memory && memory.agents && memory.agents[role]) return roleModels.default.trim();
+  return null;
+}
+
+function modelSpecMatches(spec, current) {
+  if (!spec || !current) return false;
+  const s = String(spec);
+  return s === current || s.replace(/^openrouter\//, '') === current;
+}
+
+function persistRoleModel(role, model) {
+  if (!role || role === 'other' || !model) return false;
+  const spec = String(model).startsWith('openrouter/') ? String(model) : `openrouter/${model}`;
+  try {
+    const doc = readRoleModels();
+    doc.version = doc.version || 1;
+    doc.models = doc.models || {};
+    if (doc.models[role] === spec) return true;
+    doc.models[role] = spec;
+    writeRoleModels(doc);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Change the model in a pane by typing /model (the TUI has no socket API for
+// this). Shared by POST /api/model and the reset flow. `model` may carry the
+// openrouter/ provider prefix; pi's command wants the bare catalog id.
+async function switchPaneModel(pane, model) {
+  const wire = String(model || '').trim().replace(/^openrouter\//, '');
+  if (!/^[A-Za-z0-9~][A-Za-z0-9._:/@~-]{0,119}$/.test(wire)) {
+    return { ok: false, code: 400, error: 'invalid model id' };
+  }
+  if (modelSwitching.has(pane)) return { ok: false, code: 409, error: 'a model change is already in progress' };
+  const paneInfo = await herdrJson(['pane', 'get', pane]);
+  if (!paneInfo.pane) return { ok: false, code: 404, error: 'pane not found' };
+  if (!paneInfo.pane.agent) return { ok: false, code: 409, error: 'pane has no agent' };
+  if (paneInfo.pane.agent_status === 'working') {
+    return { ok: false, code: 409, error: 'agent is working; wait for it to finish before changing the model' };
+  }
+  const catalog = await fetchModelCatalog();
+  if (catalog.source === 'openrouter' && !catalog.list.some((m) => m.id === wire)) {
+    return { ok: false, code: 400, error: `unknown model: ${wire}` };
+  }
+  modelSwitching.add(pane);
+  try {
+    // Clear any draft/autocomplete, then submit. The TUI's model autocomplete
+    // can swallow the first Enter, so retry once if the footer did not change.
+    await run(HERDR, ['pane', 'send-keys', pane, 'esc'], { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 200));
+    // Clear any leftover draft/model-selector filter before typing the command.
+    await run(HERDR, ['pane', 'send-keys', pane, 'C-u'], { timeout: 4000 });
+    await new Promise((r) => setTimeout(r, 150));
+    const typed = await run(HERDR, ['pane', 'send-text', pane, `/model ${wire}`], { timeout: 4000 });
+    if (!typed.ok) return { ok: false, code: 502, error: typed.stderr.trim() || 'could not type /model' };
+    await new Promise((r) => setTimeout(r, 500));
+    const enter = await run(HERDR, ['pane', 'send-keys', pane, 'Enter'], { timeout: 4000 });
+    if (!enter.ok) return { ok: false, code: 502, error: enter.stderr.trim() || 'could not press Enter' };
+    await new Promise((r) => setTimeout(r, 700));
+    let detected = await paneModel(pane);
+    if (detected.model !== wire) {
+      await run(HERDR, ['pane', 'send-keys', pane, 'Enter'], { timeout: 4000 });
+      await new Promise((r) => setTimeout(r, 700));
+      detected = await paneModel(pane);
+    }
+    return { ok: true, pane, model: detected.model || wire, verified: detected.model === wire };
+  } finally {
+    modelSwitching.delete(pane);
+  }
 }
 
 async function state() {
@@ -886,6 +1033,8 @@ async function state() {
   ]);
   if (paneRes.error) return { error: paneRes.error, herdr: 'down' };
   const tabs = tabRes.tabs || [];
+  const memory = readMemoryDoc();
+  const roleModels = readRoleModels();
   const panes = (paneRes.panes || []).map((p) => {
     const role = roleForPane(p, tabs);
     return {
@@ -896,6 +1045,7 @@ async function state() {
       status: p.agent ? (p.agent_status || 'unknown') : 'shell',
       title: p.terminal_title_stripped || p.terminal_title || '',
       role,
+      model_default: roleModelFor(role, roleModels, memory),
       repo: role === 'backender' || role === 'reviewer'
         ? { name: 'api', ...apiGit }
         : role === 'frontender' ? { name: 'client', ...feGit } : null,
@@ -905,11 +1055,11 @@ async function state() {
     const info = await paneModel(p.pane_id);
     p.model = info.model;
     p.thinking = info.thinking;
+    p.context = info.context;
+    p.cost = info.cost;
   }));
   let tasksRaw = '';
   try { tasksRaw = fs.readFileSync(path.join(STATE, 'tasks.md'), 'utf8'); } catch {}
-  let memory = {};
-  try { memory = JSON.parse(fs.readFileSync(path.join(STATE, 'memory.json'), 'utf8')); } catch {}
   return {
     herdr: 'up',
     workspace: (wsRes.workspaces || [])[0] || null,
@@ -917,6 +1067,7 @@ async function state() {
     repos: { api: apiGit, client: feGit },
     tasks: parseTasks(tasksRaw),
     memory,
+    role_models: roleModels,
     server_time: new Date().toISOString(),
   };
 }
@@ -1172,43 +1323,26 @@ const server = http.createServer(async (req, res) => {
       // The catalog and /model use ids without the provider prefix; accept both.
       const model = String(body.model || '').trim().replace(/^openrouter\//, '');
       if (!PANE_RE.test(pane)) return json(res, 400, { error: 'invalid pane id' });
-      if (!/^[A-Za-z0-9~][A-Za-z0-9._:/@~-]{0,119}$/.test(model)) return json(res, 400, { error: 'invalid model id' });
-      if (modelSwitching.has(pane)) return json(res, 409, { error: 'a model change is already in progress' });
-      const paneInfo = await herdrJson(['pane', 'get', pane]);
-      if (!paneInfo.pane) return json(res, 404, { error: 'pane not found' });
-      if (!paneInfo.pane.agent) return json(res, 409, { error: 'pane has no agent' });
-      if (paneInfo.pane.agent_status === 'working') {
-        return json(res, 409, { error: 'agent is working; wait for it to finish before changing the model' });
+      const result = await switchPaneModel(pane, model);
+      if (!result.ok) return json(res, result.code || 409, { error: result.error });
+      // A dashboard pick is a role preference, not just a one-session override:
+      // store it so /new (and reset) comes back to this model.
+      let persisted = false;
+      if (result.verified) {
+        const [paneInfo, tabInfo] = await Promise.all([
+          herdrJson(['pane', 'get', pane]),
+          herdrJson(['tab', 'list']),
+        ]);
+        const role = paneInfo.pane ? roleForPane(paneInfo.pane, tabInfo.tabs || []) : null;
+        persisted = persistRoleModel(role, result.model);
       }
-      const catalog = await fetchModelCatalog();
-      if (catalog.source === 'openrouter' && !catalog.list.some((m) => m.id === model)) {
-        return json(res, 400, { error: `unknown model: ${model}` });
-      }
-      modelSwitching.add(pane);
-      try {
-        // Clear any draft/autocomplete, then submit. The TUI's model autocomplete
-        // can swallow the first Enter, so retry once if the footer did not change.
-        await run(HERDR, ['pane', 'send-keys', pane, 'esc'], { timeout: 4000 });
-        await new Promise((r) => setTimeout(r, 200));
-        // Clear any leftover draft/model-selector filter before typing the command.
-        await run(HERDR, ['pane', 'send-keys', pane, 'C-u'], { timeout: 4000 });
-        await new Promise((r) => setTimeout(r, 150));
-        const typed = await run(HERDR, ['pane', 'send-text', pane, `/model ${model}`], { timeout: 4000 });
-        if (!typed.ok) return json(res, 502, { error: typed.stderr.trim() || 'could not type /model' });
-        await new Promise((r) => setTimeout(r, 500));
-        const enter = await run(HERDR, ['pane', 'send-keys', pane, 'Enter'], { timeout: 4000 });
-        if (!enter.ok) return json(res, 502, { error: enter.stderr.trim() || 'could not press Enter' });
-        await new Promise((r) => setTimeout(r, 700));
-        let detected = await paneModel(pane);
-        if (detected.model !== model) {
-          await run(HERDR, ['pane', 'send-keys', pane, 'Enter'], { timeout: 4000 });
-          await new Promise((r) => setTimeout(r, 700));
-          detected = await paneModel(pane);
-        }
-        return json(res, 200, { ok: true, pane, model: detected.model || model, verified: detected.model === model });
-      } finally {
-        modelSwitching.delete(pane);
-      }
+      return json(res, 200, {
+        ok: true,
+        pane,
+        model: result.model,
+        verified: result.verified,
+        persisted,
+      });
     }
 
     if (req.method === 'POST' && url.pathname === '/api/tasks/clear') {
@@ -1246,7 +1380,15 @@ const server = http.createServer(async (req, res) => {
       const pane = String(body.pane || '');
       if (!PANE_RE.test(pane)) return json(res, 400, { error: 'invalid pane id' });
       const result = await resetAgentPane(pane);
-      if (result.status === 'reset') return json(res, 200, { ok: true, pane });
+      if (result.status === 'reset') {
+        return json(res, 200, {
+          ok: true,
+          pane,
+          role: result.role || null,
+          model: result.model || null,
+          model_error: result.model_error || null,
+        });
+      }
       return json(res, result.code || 409, { error: result.reason || 'reset failed' });
     }
 
@@ -1283,6 +1425,8 @@ const server = http.createServer(async (req, res) => {
           role: roleForPane(p, tabs.tabs || []),
           status: result.status,
           reason: result.reason || null,
+          model: result.model || null,
+          model_error: result.model_error || null,
         });
       }
       return json(res, 200, { ok: true, results });

@@ -123,6 +123,20 @@ if [ -f "$HOME/.pi/agent/extensions/herdr-agent-messenger.ts" ]; then
 else
   warn "pi:extension:messenger" "herdr-agent-messenger pi adapter not linked"
 fi
+if [ -f "$HERE/role-models.json" ]; then
+  if jq -e '.models | type == "object"' "$HERE/role-models.json" >/dev/null 2>&1; then
+    pass "model:roles" "$(jq -r '(.models | to_entries | map("\(.key)=\(.value)") | join(", ")) // ""' "$HERE/role-models.json")"
+  else
+    fail "model:roles" "$HERE/role-models.json is not valid (expected a .models object)"
+  fi
+else
+  warn "model:roles" "missing; roles fall back to pi defaults"
+fi
+if [ -f "$HOME/.pi/agent/extensions/role-model.ts" ]; then
+  pass "pi:extension:role-model" "installed (role model survives /new)"
+else
+  warn "pi:extension:role-model" "not linked; /new can fall back to pi's default model"
+fi
 
 # ---------- 5. project shape ----------
 for d in "$API" "$CLIENT"; do

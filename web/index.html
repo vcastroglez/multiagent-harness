@@ -118,6 +118,15 @@
   .att .att-name { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
   .att .att-rm { position:absolute; top:-7px; right:-7px; width:20px; height:20px; padding:0; border-radius:50%; font-size:12px; line-height:1; background:var(--panel2); border:1px solid var(--border); }
   .paste-hint { margin-top:6px; font-size:11.5px; color:var(--muted); }
+  .talk-cwd { display:flex; align-items:baseline; flex-wrap:wrap; gap:8px 16px; margin-top:10px; min-width:0; font-size:11.5px; color:var(--muted); }
+  .talk-cwd .item { display:inline-flex; align-items:baseline; gap:6px; min-width:0; }
+  .talk-cwd .lbl { flex:none; text-transform:uppercase; letter-spacing:.4px; }
+  .talk-cwd .val { font:12px var(--mono); }
+  .talk-cwd .val.model { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .talk-cwd .val.warn { color:var(--warn); }
+  .talk-cwd .val.danger { color:var(--bad); }
+  .talk-cwd button.open-dir { all:unset; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; cursor:pointer; color:inherit; font:12px var(--mono); text-decoration:underline dotted; }
+  .talk-cwd button.open-dir:hover, .talk-cwd button.open-dir:focus-visible { color:var(--accent); outline:none; }
   #img-overlay { z-index:50; cursor:zoom-out; }
   #img-overlay img { max-width:92vw; max-height:90vh; border-radius:10px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
   #confirm-overlay { z-index:60; }
@@ -334,6 +343,24 @@
           <span class="status" id="send-status"></span>
           <button class="primary" id="send">Send</button>
         </div>
+        <div class="talk-cwd" id="talk-cwd" hidden>
+          <span class="item" id="talk-cwd-item">
+            <span class="lbl">cwd</span>
+            <button class="open-dir" id="talk-cwd-path" type="button"></button>
+          </span>
+          <span class="item" id="talk-model-item" hidden>
+            <span class="lbl">model</span>
+            <span class="val model" id="talk-model"></span>
+          </span>
+          <span class="item" id="talk-context-item" hidden>
+            <span class="lbl">context</span>
+            <span class="val" id="talk-context"></span>
+          </span>
+          <span class="item" id="talk-cost-item" hidden>
+            <span class="lbl">cost</span>
+            <span class="val" id="talk-cost"></span>
+          </span>
+        </div>
       </section>
     </div>
 
@@ -411,6 +438,7 @@
   let modelsLoading = false;
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const shortCwd = (cwd) => String(cwd || '').replace(/^.*\/html\//, '');
   const hhmmss = (ts) => { try { return new Date(ts).toLocaleTimeString([], { hour12:false }); } catch { return ''; } };
 
   // ---------- markdown ----------
@@ -1033,13 +1061,19 @@
     localStorage.setItem(LS.agentExpanded, JSON.stringify([...expandedPanes]));
   }
 
+  let paneFooter = {}; // pane id -> { cwd, model, modelDefault, context, cost } from the latest /api/state
+
   function renderAgents(s) {
     const order = { coordinator: 0, backender: 1, reviewer: 2, frontender: 3 };
     const panes = [...s.panes].sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9));
+    paneFooter = Object.fromEntries(panes.map((p) => [p.pane_id, {
+      cwd: p.cwd || '', model: p.model || '', modelDefault: p.model_default || '',
+      context: p.context || '', cost: p.cost || '',
+    }]));
     const agentCount = panes.filter((p) => p.agent).length;
     $('agents').innerHTML = panes.map((p) => {
       const hint = (p.role === 'coordinator' || p.role === 'reviewer') && !p.agent
-        ? `<p class="muted" style="font-size:12px;margin:0">Not running. Start it with <code>.pi/multiagent/bootstrap.sh --start-agents</code>.</p>`
+        ? `<p class="muted" style="font-size:12px;margin:0">Not running. Start it with <code>./bootstrap.sh --start-agents</code>.</p>`
         : '';
       const working = p.status === 'working';
       const canChangeModel = !!p.agent && !working;
@@ -1048,6 +1082,9 @@
       const delTitle = canDelete
         ? `Delete the ${p.role} agent (closes its pane/tab)`
         : 'Cannot delete the last agent: a live agent is the only way to create new ones';
+      const modelTitle = p.model_default
+        ? `${p.model || 'Select a model'} · role default: ${p.model_default}`
+        : (p.model || 'Select a model');
       const isExpanded = expandedPanes.has(p.pane_id);
       return `<article class="card ${isExpanded ? 'expanded' : 'compact'}" data-pane="${esc(p.pane_id)}">
         <h2>${esc(p.role)} <span class="badge ${esc(p.status)}">${esc(p.status)}</span></h2>
@@ -1067,13 +1104,13 @@
             <dt>call-sign</dt><dd>${esc((s.memory.agents?.[p.role]?.call_sign) || '–')}</dd>
             <dt>pane</dt><dd>${esc(p.pane_id)}</dd>
             <dt>agent</dt><dd>${esc(p.agent || 'shell')}</dd>
-            <dt>cwd</dt><dd><button class="open-dir" data-explore="${esc(p.cwd)}" title="Browse ${esc(p.cwd)} in a new tab">${esc(p.cwd.replace(/^.*\/html\//, ''))}</button></dd>
+            <dt>cwd</dt><dd><button class="open-dir" data-explore="${esc(p.cwd)}" title="Browse ${esc(p.cwd)} in a new tab">${esc(shortCwd(p.cwd))}</button></dd>
             ${p.repo ? `<dt>branch</dt><dd title="${esc(p.repo.last_commit)}">${esc(p.repo.branch)}${p.repo.dirty ? ` · ${p.repo.dirty} dirty` : ''}</dd>` : ''}
           </dl>
           ${p.agent ? `<div class="model-line">
             <span class="lbl">model</span>
             <div class="model-picker" data-model-picker="${esc(p.pane_id)}" data-model-current="${esc(p.model || '')}">
-              <button class="model-trigger" data-model-open="${esc(p.pane_id)}" data-role="${esc(p.role)}" aria-haspopup="listbox" aria-expanded="false" title="${esc(p.model || 'Select a model')}" ${canChangeModel ? '' : 'disabled'}>
+              <button class="model-trigger" data-model-open="${esc(p.pane_id)}" data-role="${esc(p.role)}" aria-haspopup="listbox" aria-expanded="false" title="${esc(modelTitle)}" ${canChangeModel ? '' : 'disabled'}>
                 <span class="model-label">${esc(p.model || 'Select model')}</span><span class="chev">▾</span>
               </button>
               <div class="model-popover" hidden></div>
@@ -1356,9 +1393,56 @@
     }
   }
 
+  // Footer under "Talk to an agent": cwd, model, PI-style context usage and session cost.
+  function renderTargetFooter() {
+    const pane = $('target').value;
+    const meta = pane ? paneFooter[pane] || {} : {};
+    const cwd = meta.cwd || '';
+    const model = meta.model || '';
+    const context = meta.context || '';
+    const cost = meta.cost || '';
+    const footer = $('talk-cwd');
+    const cwdItem = $('talk-cwd-item');
+    const modelItem = $('talk-model-item');
+    const ctxItem = $('talk-context-item');
+    const costItem = $('talk-cost-item');
+    const btn = $('talk-cwd-path');
+    const modelEl = $('talk-model');
+    const ctxEl = $('talk-context');
+    const costEl = $('talk-cost');
+
+    footer.hidden = !cwd && !model && !context && !cost;
+
+    cwdItem.hidden = !cwd;
+    if (cwd) {
+      const short = shortCwd(cwd);
+      if (btn.textContent !== short) btn.textContent = short;
+      btn.dataset.explore = cwd;
+      btn.title = `Browse ${cwd} in a new tab`;
+    } else {
+      btn.textContent = '';
+      btn.removeAttribute('data-explore');
+      btn.removeAttribute('title');
+    }
+
+    modelItem.hidden = !model;
+    modelEl.textContent = model;
+    if (model) modelEl.title = model; else modelEl.removeAttribute('title');
+
+    ctxItem.hidden = !context;
+    const pct = parseFloat(context);
+    const level = Number.isFinite(pct) ? (pct > 90 ? 'danger' : pct > 70 ? 'warn' : '') : '';
+    ctxEl.textContent = context;
+    ctxEl.className = level ? `val ${level}` : 'val';
+
+    costItem.hidden = !cost;
+    costEl.textContent = cost;
+  }
+
   // The inline live card follows the agent selected in "Talk to an agent".
   function syncLive() {
     markFocusedAgent();
+    renderTargetFooter();
     const opt = $('target').selectedOptions[0];
     if (!opt || !opt.value) {
       liveTail.close();
@@ -1491,16 +1575,18 @@
   }
 
   async function reset(pane, role) {
+    const modelDefault = paneFooter[pane]?.modelDefault || '';
     const confirmed = await askConfirm({
       title: `Reset ${role}?`,
-      message: `This starts a new pi session for ${pane}, discards its context, and returns to pi's default model.`,
+      message: `This starts a new pi session for ${pane}, discards its context, and returns to ${role}'s predefined model${modelDefault ? ` (${modelDefault})` : ''}.`,
       confirmLabel: 'Reset',
       danger: true,
     });
     if (!confirmed) return;
     try {
-      await api('/api/reset', { method: 'POST', body: JSON.stringify({ pane }), timeout: 60000 });
-      toast(`New session started for ${role}`);
+      const r = await api('/api/reset', { method: 'POST', body: JSON.stringify({ pane }), timeout: 60000 });
+      if (r.model_error) toast(`New session for ${role}; model not re-applied: ${r.model_error}`, true);
+      else toast(`New session started for ${role}${r.model ? ` · model ${r.model}` : ''}`);
       setTimeout(refresh, 800);
     } catch (e) {
       toast(e.message, true);
@@ -1510,7 +1596,7 @@
   async function deleteAgent(pane, role) {
     const confirmed = await askConfirm({
       title: `Delete the ${role} agent?`,
-      message: `This closes pane ${pane} and ends its pi process. Repositories and branches are untouched — run .pi/multiagent/bootstrap.sh (or ask another agent) to bring the role back.`,
+      message: `This closes pane ${pane} and ends its pi process. Repositories and branches are untouched — run ./bootstrap.sh (or ask another agent) to bring the role back.`,
       confirmLabel: 'Delete agent',
       danger: true,
     });
@@ -1538,7 +1624,8 @@
     if (!model) return;
     try {
       const r = await api('/api/model', { method: 'POST', body: JSON.stringify({ pane, model }) });
-      toast(`${role} → ${r.model}${r.verified ? '' : ' (check footer)'}`, !r.verified);
+      const saved = r.persisted ? ' · saved as role default' : '';
+      toast(`${role} → ${r.model}${r.verified ? '' : ' (check footer)'}${saved}`, !r.verified);
       setTimeout(refresh, 1000);
     } catch (e) {
       toast(e.message, true);

@@ -19,6 +19,7 @@ API="${BACKEND_DIR:-$BASE/backend}"
 CLIENT="${FRONTEND_DIR:-$BASE/frontend}"
 COORD_PROMPT="$HERE/coordinator.md"
 REVIEW_PROMPT="$HERE/reviewer.md"
+MODELS="$HERE/role-models.json"
 PORT="${DASHBOARD_PORT:-7788}"
 HOST="${DASHBOARD_HOST:-127.0.0.1}"
 START_AGENTS=0
@@ -36,6 +37,16 @@ while [ $# -gt 0 ]; do
 done
 
 log() { printf '[bootstrap] %s\n' "$*"; }
+
+# The predefined model for a role (role-models.json). Missing entries fall back to
+# `default`; a missing file simply leaves pi's own defaults in place.
+role_model() {
+  local role="$1" model=""
+  [ -f "$MODELS" ] || return 0
+  model="$(jq -r --arg r "$role" '.models[$r] // empty' "$MODELS" 2>/dev/null || true)"
+  [ -n "$model" ] || model="$(jq -r '.default // empty' "$MODELS" 2>/dev/null || true)"
+  printf '%s' "$model"
+}
 
 # ---------- herdr server ----------
 if herdr status 2>/dev/null | grep -A1 '^server:' | grep -q 'status: running'; then
@@ -131,19 +142,28 @@ log "panes: coordinator=$COORD_PANE backender=$BE_PANE reviewer=$REVIEW_PANE fro
 
 # ---------- optional agent start ----------
 start_agent() {
-  local role="$1" pane="$2" agent extra=()
+  local role="$1" pane="$2" agent model agent_args=()
   agent="$(herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.agent // empty')"
   if [ -n "$agent" ]; then log "$role: already running $agent"; return 0; fi
   if [ "$START_AGENTS" != "1" ]; then log "$role: shell pane (use --start-agents to launch pi)"; return 0; fi
+  # A per-role model is passed on the command line, so pi keeps it when a fresh
+  # session is started with /new. role-model.ts re-applies it if the process was
+  # started before the model was configured.
+  model="$(role_model "$role")"
+  [ -z "$model" ] || agent_args+=(--model "$model")
   # The coordinator gets coordination-only rules; it must not edit either repo.
   # The reviewer gets read-only/audit rules for the backender's repository.
   if [ "$role" = coordinator ] && [ -f "$COORD_PROMPT" ]; then
-    extra=(-- --append-system-prompt "$COORD_PROMPT")
+    agent_args+=(--append-system-prompt "$COORD_PROMPT")
   elif [ "$role" = reviewer ] && [ -f "$REVIEW_PROMPT" ]; then
-    extra=(-- --append-system-prompt "$REVIEW_PROMPT")
+    agent_args+=(--append-system-prompt "$REVIEW_PROMPT")
   fi
-  log "$role: starting pi in $pane"
-  herdr agent start "$role" --kind pi --pane "$pane" --timeout 60000 "${extra[@]}" >/dev/null
+  log "$role: starting pi${model:+ (model $model)} in $pane"
+  if [ ${#agent_args[@]} -gt 0 ]; then
+    herdr agent start "$role" --kind pi --pane "$pane" --timeout 60000 -- "${agent_args[@]}" >/dev/null
+  else
+    herdr agent start "$role" --kind pi --pane "$pane" --timeout 60000 >/dev/null
+  fi
   log "$role: pi ready"
 }
 # Coordinator: coordination only (dispatch + task queue). The workers remain

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "default": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+  "models": {
+    "coordinator": "openrouter/anthropic/claude-haiku-5.5",
+    "backender": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+    "reviewer": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+    "frontender": "openrouter/deepseek/deepseek-v4.1-flash-1017"
+  }
+}

@@ -68,6 +68,12 @@ After the backender reports a task, the coordinator sends the task and commit to
 the reviewer. Only `APPROVED` closes the task; `CHANGES REQUESTED` goes back to
 the backender and then back to the reviewer.
 
+Each role has a predefined model in [`role-models.json`](role-models.json).
+`bootstrap.sh` starts the agent with `--model <role model>`, the dashboard model
+picker saves the selection back to that file, and
+[`pi-extensions/role-model.ts`](pi-extensions/role-model.ts) re-applies it on
+every session start, so `/new` does not fall back to pi's global default.
+
 ```bash
 ./dispatch.sh coordinator "Status?" --wait
 ./dispatch.sh backender  "Add the endpoint; report commit and tests."
@@ -83,10 +89,13 @@ the backender and then back to the reviewer.
 - **Prompt** dispatch with optional “wait for idle”
 - per-agent **Reset** (`/new`) and **Stop** (interrupts the running turn)
 - **Reset all agents**
+- a footer under **Talk to an agent** with the selected agent's cwd, model,
+  PI-style context usage and session cost; reset re-applies the role model
 - task queue rendered from `tasks.md` (created from `tasks_template.md` on first
   bootstrap and git-ignored); click a task to read its full text (including
   wrapped continuation lines) in a pop-up; **Clear** archives the queue first
-- searchable **model picker**
+- searchable **model picker**; a verified pick becomes the role's predefined
+  model and survives `/new`
 - screenshot paste (validated, stored under `uploads/`, pruned)
 - per-card **× delete** (disabled when it is the last agent)
 - read-only file explorer over the workspace
@@ -129,13 +138,15 @@ journalctl --user -u mah-herdr -u mah-agents -u mah-dashboard -f
 bootstrap.sh          idempotent server/pane/agent bring-up
 preflight.sh          read-only prerequisite/state checker
 dispatch.sh           role -> pane resolver; prompt via msg or herdr
+create-agent.sh       add a purpose-named extra agent (records its model)
 coordinator.md        coordination-only system prompt
 reviewer.md           read-only audit prompt
+role-models.json      predefined model per role; survives /new
 tasks_template.md     queue template (copied to git-ignored tasks.md on first run)
 THIRD_PARTY_NOTICES.md  third-party licenses and attributions
 web/                  zero-dependency dashboard (Node + static pages)
 systemd/              user unit templates + installer
-pi-extensions/        optional queue-guard pi extension and its test
+pi-extensions/        optional role-model and queue-guard pi extensions + tests
 ```
 
 Runtime files (`memory.json`, `sessions.json`, `auth-state.json`,

@@ -1,5 +1,32 @@
 # pi extensions for the multiagent harness
 
+## role-model.ts
+
+Keeps each agent on its role's predefined model across `/new`, `/fork` and
+`/resume`. On every `session_start` it reads `../role-models.json`, resolves the
+role from the herdr tab label (or `MAH_ROLE`), and calls `pi.setModel()` when the
+current model differs. `<role>` entries are exact; the shared `default` is only
+used for agents already listed in `memory.json`, so other herdr tabs are never
+changed. Set `MAH_ROLE_MODELS` to override the config path and `MAH_STATE_DIR`
+to point at the `memory.json` used for that fallback.
+
+Install (global, all pi sessions on this host):
+
+```bash
+ln -sfn "$PWD/pi-extensions/role-model.ts" ~/.pi/agent/extensions/role-model.ts
+```
+
+Running sessions pick it up on their next `/new` (pi reloads extensions for the
+new session); a process restart also loads it. `bootstrap.sh` additionally passes
+`--model <role model>` when it starts an agent, and the dashboard model picker
+writes the choice back to `role-models.json`.
+
+Test (no model calls):
+
+```bash
+node pi-extensions/role-model.test.mjs
+```
+
 ## queue-guard.ts
 
 Enforces the task-queue rule (`tasks.md`): when a turn used tools, the queue must be

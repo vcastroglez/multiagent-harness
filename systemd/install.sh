@@ -50,6 +50,13 @@ for u in "${UNITS[@]}"; do
 done
 systemctl --user daemon-reload
 
+# Per-role models survive /new through this global pi extension (see
+# pi-extensions/README.md). Keep it in sync with the source of truth.
+EXT_DIR="$HOME/.pi/agent/extensions"
+mkdir -p "$EXT_DIR"
+ln -sfn "$HARNESS/pi-extensions/role-model.ts" "$EXT_DIR/role-model.ts"
+log "linked role-model.ts -> $HARNESS/pi-extensions/role-model.ts"
+
 # linger keeps the user manager alive without an interactive login (and thus
 # after a reboot); it is a one-time, root/polkit-guarded switch
 if [ "$LINGER" = "1" ]; then

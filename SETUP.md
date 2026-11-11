@@ -67,6 +67,7 @@ them in the systemd unit environment):
 | `FRONTEND_DIR` | `$WORKSPACE_ROOT/frontend` | frontend checkout |
 | `MAH_STATE_DIR` | harness root | where `tasks.md`, `memory.json`, uploads live |
 | `MAH_TASKS_FILE` | `$MAH_STATE_DIR/tasks.md` | queue path used by the pi extension |
+| `MAH_ROLE_MODELS` | harness root `role-models.json` | per-role model overrides for `role-model.ts` |
 | `MAH_REQUIRE_SERVER` | `0` | refuse to spawn a second herdr server |
 | `MAH_REQUIRE_TOTP` | `1` | fail closed until a TOTP secret is enrolled |
 | `MAH_ALLOWED_USERS` | dashboard user | comma-separated PAM accounts allowed to sign in |
@@ -153,13 +154,16 @@ node web/totp-setup.js
 ```
 
 Per agent, the dashboard shows call-sign, pane id, agent/status, repo, branch and
-dirty-file count. It also provides:
+dirty-file count. The footer under **Talk to an agent** also shows the selected
+agent's cwd, model, PI-style context usage and session cost. It also provides:
 
 - **Tail** — a live, full session console (messages, thinking, tool calls, results).
 - **Prompt** — dispatch, optionally waiting for idle.
-- **Reset** — starts a fresh pi session via `/new`; blocked while the agent works.
+- **Reset** — starts a fresh pi session via `/new` and re-applies the role model;
+  blocked while the agent works.
 - **Stop** — while working, Reset becomes Stop and interrupts the turn with `Esc`.
-- **Model picker** — searchable model dropdown; applies `/model <id>`.
+- **Model picker** — searchable model dropdown; applies `/model <id>` and saves a
+  verified pick as the role's predefined model in `role-models.json`.
 - **× delete** — closes that agent's pane/tab; disabled when it is the last agent.
 - **Reset all agents** — sequential reset, skipping working agents.
 - **Task queue** — `tasks.md`; click a task for its full text; **Clear** archives first.
@@ -232,7 +236,12 @@ herdr agent read <pane> --source visible --lines 40
   and appends the absolute paths to the prompt.
 - **Model change:** the dropdown calls `POST /api/model`; the server validates the id
   against the OpenRouter catalog, clears any draft, sends `/model <id>`, and returns
-  the detected footer model.
+  the detected footer model. A verified pick is written to `role-models.json` as the
+  role default (`persisted`), so it survives `/new`.
+- **Role model on session start:** `pi-extensions/role-model.ts` reads
+  `role-models.json` and re-applies the model whenever pi starts a new/resumed
+  session. `bootstrap.sh` also passes `--model <role model>` when it launches an
+  agent. Install the extension once; `systemd/install.sh` links it automatically.
 - **Auth:** username + password are verified by `pam_auth.py` through `libpam` using
   the system `login` service; a TOTP code is required. Passwords are never logged or
   placed in argv/env. Accounts can be restricted with `MAH_ALLOWED_USERS`.
@@ -303,6 +312,8 @@ under `MAH_REQUIRE_SERVER=1` it refuses to spawn a second herdr server.
 | `preflight.sh` | read-only prerequisite/state checker |
 | `bootstrap.sh` | idempotent server/pane/agent/memory bring-up |
 | `dispatch.sh` | role→pane resolver; prompt via msg or herdr |
+| `create-agent.sh` | add a purpose-named extra agent; records its model |
+| `role-models.json` | predefined model per role; survives `/new` |
 | `web/server.js` | zero-dep dashboard API |
 | `web/index.html` | login form + console + model picker + paste composer |
 | `web/files.html` | read-only workspace explorer |
@@ -314,7 +325,7 @@ under `MAH_REQUIRE_SERVER=1` it refuses to spawn a second herdr server.
 | `coordinator.md` | coordination-only system prompt |
 | `reviewer.md` | read-only audit prompt |
 | `tasks_template.md` | tracked queue template (copied to git-ignored `tasks.md`) |
-| `pi-extensions/` | optional queue-guard extension + test |
+| `pi-extensions/` | optional role-model and queue-guard extensions + tests |
 
 Runtime logs: `journalctl --user -u mah-herdr -u mah-agents -u mah-dashboard`, or
 `web/dashboard.log` when started outside systemd. herdr also writes its own log under
