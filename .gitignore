@@ -1,0 +1,11 @@
+memory.json
+auth-state.json
+herdr-server.log
+web/dashboard.log
+web/.token
+web/__pycache__/
+uploads/
+tasks-archive/
+sessions.json
+*.log
+node_modules/

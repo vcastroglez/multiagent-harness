@@ -1,0 +1,25 @@
+[Unit]
+Description=herdr headless server (multi-agent workspace)
+Documentation=file://@HARNESS@/SETUP.md
+StartLimitIntervalSec=0
+# the server owns the panes, and the panes own the pi agents; bringing the
+# server up also means bringing the roles up
+Wants=mah-agents.service
+
+[Service]
+Type=simple
+# systemd --user does not inherit the login shell PATH; panes are spawned by
+# this server, so give it the same paths an interactive login would have
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=MAH_STACK=1
+Environment=WORKSPACE_ROOT=@WORKSPACE@
+ExecStart=/usr/bin/env herdr server
+# ask herdr to persist/close panes cleanly before SIGTERM
+ExecStop=/usr/bin/env herdr server stop
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

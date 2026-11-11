@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Files · multiagent-harness</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --bad:#f85149;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; display:flex; flex-direction:column; }
+  header { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--panel); min-width:0; }
+  header h1 { font-size:15px; margin:0; font-weight:650; }
+  header a { color:var(--accent); text-decoration:none; white-space:nowrap; }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:5px 10px; font:inherit; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #crumbs { flex:1; min-width:0; display:flex; align-items:center; gap:2px; overflow:hidden; font-family:var(--mono); font-size:12.5px; white-space:nowrap; }
+  #crumbs .sep { color:var(--muted); }
+  #crumbs .crumb { background:none; border:0; padding:0 2px; color:var(--accent); font:inherit; font-family:var(--mono); font-size:12.5px; }
+  main { display:grid; grid-template-columns:minmax(240px, 360px) 1fr; flex:1; min-height:0; }
+  #list { overflow:auto; border-right:1px solid var(--border); }
+  .item { display:flex; align-items:center; gap:8px; padding:5px 12px; cursor:pointer; font-family:var(--mono); font-size:13px; border-bottom:1px solid #21262d; }
+  .item:hover { background:var(--panel2); }
+  .item.sel { background:#1f2a3a; }
+  .item .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item.dir .name { color:var(--accent); }
+  .item.other .name { color:var(--muted); }
+  .item .meta { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+  #viewer { display:flex; flex-direction:column; min-width:0; min-height:0; }
+  #viewer-head { padding:8px 14px; border-bottom:1px solid var(--border); color:var(--muted); font-family:var(--mono); font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #viewer-body { flex:1; margin:0; padding:12px 14px; overflow:auto; font-family:var(--mono); font-size:12.5px; line-height:1.45; white-space:pre; tab-size:4; color:var(--text); }
+  #viewer-body.err { color:var(--bad); white-space:normal; }
+  .note { padding:12px 14px; color:var(--muted); }
+  .note.err { color:var(--bad); }
+  @media (max-width:760px) {
+    main { grid-template-columns:1fr; grid-template-rows:40vh 1fr; }
+    #list { border-right:0; border-bottom:1px solid var(--border); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Files</h1>
+  <button id="up" title="Parent folder">↑ Up</button>
+  <nav id="crumbs"></nav>
+  <a href="/">← Dashboard</a>
+</header>
+<main>
+  <section id="list"></section>
+  <section id="viewer">
+    <div id="viewer-head">Select a file to read it as text.</div>
+    <pre id="viewer-body"></pre>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let root = null;    // workspace root (absolute, real path)
+  let current = null; // folder being shown (absolute)
+  let selected = null;
+
+  async function getJson(url) {
+    const r = await fetch(url, { credentials: 'same-origin' });
+    if (r.status === 401) { location.href = '/'; throw new Error('signed out'); }
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+    return body;
+  }
+
+  const fmtSize = (n) => n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+  const rel = (abs) => (root && abs.startsWith(root)) ? (abs.slice(root.length) || '/') : abs;
+
+  function note(msg, isErr) {
+    const d = document.createElement('div');
+    d.className = 'note' + (isErr ? ' err' : '');
+    d.textContent = msg;
+    return d;
+  }
+
+  function renderCrumbs() {
+    const nav = $('crumbs');
+    nav.textContent = '';
+    const addCrumb = (label, abs) => {
+      if (nav.childElementCount) { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '/'; nav.append(s); }
+      const b = document.createElement('button');
+      b.className = 'crumb';
+      b.textContent = label;
+      b.title = abs;
+      b.onclick = () => openFolder(abs);
+      nav.append(b);
+    };
+    addCrumb('workspace', root);
+    let acc = root;
+    for (const seg of rel(current).split('/').filter(Boolean)) {
+      acc = acc.replace(/\/$/, '') + '/' + seg;
+      addCrumb(seg, acc);
+    }
+  }
+
+  function entryRow(e) {
+    const row = document.createElement('div');
+    row.className = 'item ' + e.type;
+    row.title = e.name;
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = e.type === 'dir' ? e.name + '/' : e.name;
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = e.type === 'file' ? fmtSize(e.size) : '';
+    row.append(name, meta);
+    const child = current.replace(/\/$/, '') + '/' + e.name;
+    row.onclick = () => (e.type === 'dir' ? openFolder(child) : openFile(child, row));
+    return row;
+  }
+
+  async function openFolder(p) {
+    const list = $('list');
+    try {
+      const data = await getJson('/api/fs/list?path=' + encodeURIComponent(p || ''));
+      root = data.root;
+      current = data.path;
+      const u = new URL(location.href);
+      u.searchParams.set('path', current);
+      history.replaceState(null, '', u);
+      renderCrumbs();
+      $('up').disabled = current === root;
+      list.textContent = '';
+      if (!data.entries.length) list.append(note('Empty folder.'));
+      for (const e of data.entries) list.append(entryRow(e));
+    } catch (err) {
+      if (!root && p) return openFolder(''); // bad ?path= in the URL: fall back to the workspace root
+      list.textContent = '';
+      list.append(note(err.message, true));
+    }
+  }
+
+  async function openFile(p, row) {
+    if (selected) selected.classList.remove('sel');
+    selected = row || null;
+    if (selected) selected.classList.add('sel');
+    const head = $('viewer-head');
+    const body = $('viewer-body');
+    body.classList.remove('err');
+    head.textContent = 'Loading…';
+    body.textContent = '';
+    try {
+      const f = await getJson('/api/fs/read?path=' + encodeURIComponent(p));
+      head.textContent = `${rel(f.path)} · ${fmtSize(f.size)}${f.truncated ? ' · showing the first 512 KB' : ''}`;
+      body.textContent = f.text;
+    } catch (err) {
+      head.textContent = rel(p);
+      body.classList.add('err');
+      body.textContent = err.message;
+    }
+  }
+
+  $('up').onclick = () => {
+    if (!root || !current || current === root) return;
+    const parent = current.slice(0, current.lastIndexOf('/'));
+    openFolder(parent.length < root.length ? root : parent);
+  };
+
+  openFolder(new URLSearchParams(location.search).get('path') || '');
+})();
+</script>
+</body>
+</html>

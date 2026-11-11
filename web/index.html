@@ -1,0 +1,1646 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>multiagent-harness · multi-agent console</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2430; --border:#30363d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --ok:#3fb950;
+    --warn:#d29922; --bad:#f85149; --purple:#bc8cff; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--border); position:sticky; top:0; background:rgba(13,17,23,.95); backdrop-filter:blur(6px); z-index:5; flex-wrap:wrap; }
+  header h1 { font-size:16px; margin:0; font-weight:650; letter-spacing:.2px; }
+  header .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); }
+  header .dot.up { background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  header .dot.down { background:var(--bad); }
+  header .spacer { flex:1; }
+  header small { color:var(--muted); font-variant-numeric:tabular-nums; }
+  header button.danger { color:var(--bad); }
+  header button.danger:hover { border-color:var(--bad); }
+  button { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.primary:hover { background:#388bfd; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  /* app shell: header on top, agents sidebar on the left, content on the right; each scrolls on its own */
+  #app { height:100vh; display:flex; flex-direction:column; }
+  #app > header { flex:none; }
+  .shell { flex:1; min-height:0; display:flex; }
+  .sidebar { flex:none; width:330px; min-height:0; overflow-x:hidden; overflow-y:auto; border-right:1px solid var(--border); background:var(--bg); padding:14px; }
+  .sidebar .section-head h2 { font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
+  .sidebar .agents { grid-template-columns:minmax(0,1fr); }
+  .sidebar .card { min-width:0; } /* let long values shrink (ellipsis) instead of widening the card */
+  .sidebar .card.focused { border-color:var(--accent); box-shadow:0 0 0 2px rgba(88,166,255,.35); }
+  .sidebar.collapsed { width:46px; padding:14px 8px; overflow:hidden; }
+  .sidebar.collapsed .section-head { margin-bottom:0; }
+  .sidebar.collapsed .section-head h2, .sidebar.collapsed .agents { display:none; }
+  /* one dot per agent, shown only while the sidebar is collapsed */
+  .rail-dots { display:none; flex-direction:column; align-items:center; gap:10px; margin-top:12px; }
+  .sidebar.collapsed .rail-dots { display:flex; }
+  .rail-dot { width:10px; height:10px; border-radius:50%; background:var(--muted); flex:none; }
+  .rail-dot.working { background:var(--warn); box-shadow:0 0 6px var(--warn); }
+  .rail-dot.idle { background:var(--ok); }
+  .rail-dot.blocked { background:var(--bad); box-shadow:0 0 6px var(--bad); }
+  .sidebar .model-popover { left:0; right:0; width:auto; } /* match the picker width so it stays inside the sidebar */
+  main { flex:1; min-width:0; min-height:0; overflow-y:auto; padding:18px; max-width:1400px; width:100%; margin:0 auto; display:grid; gap:18px; grid-template-columns:minmax(0,1fr) 380px; align-items:start; }
+  @media (max-width:980px){
+    #app { height:auto; min-height:100vh; }
+    .shell { flex-direction:column; }
+    .sidebar { width:auto; max-height:50vh; border-right:0; border-bottom:1px solid var(--border); }
+    .sidebar .agents { grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); }
+    .sidebar.collapsed { width:auto; max-height:none; padding:8px 14px; }
+    .sidebar.collapsed .rail-dots { flex-direction:row; margin-top:0; }
+    .sidebar.collapsed .section-head { margin-bottom:0; }
+    main { overflow:visible; grid-template-columns:1fr; }
+  }
+  .agents { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); align-content:start; }
+  .card { position:relative; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .card h2 { margin:0; font-size:15px; display:flex; align-items:center; gap:8px; padding-right:26px; } /* room for the delete button */
+  /* top-right delete button: closes the agent's pane/tab */
+  .card-del { position:absolute; top:8px; right:8px; width:24px; height:24px; padding:0; display:flex; align-items:center; justify-content:center; font-size:15px; line-height:1; border-radius:7px; border-color:transparent; background:transparent; color:var(--muted); }
+  .card-del:hover:not(:disabled) { color:var(--bad); border-color:var(--bad); background:var(--panel2); }
+  .badge { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.4px; }
+  .badge.working { color:var(--warn); border-color:var(--warn); }
+  .badge.idle { color:var(--ok); border-color:var(--ok); }
+  .badge.blocked { color:var(--bad); border-color:var(--bad); }
+  .badge.live { color:var(--ok); border-color:var(--ok); }
+  .badge.reconnecting { color:var(--warn); border-color:var(--warn); }
+  .kv { display:grid; grid-template-columns:82px 1fr; gap:2px 8px; font-size:12.5px; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; font-family:var(--mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .kv dd button.open-dir { all:unset; display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:bottom; cursor:pointer; color:inherit; font:inherit; text-decoration:underline dotted; }
+  .kv dd button.open-dir:hover, .kv dd button.open-dir:focus-visible { color:var(--accent); outline:none; }
+  .row { display:flex; gap:8px; }
+  .row button { flex:1; }
+  .row button.danger { color:var(--bad); }
+  .row button.danger:hover { border-color:var(--bad); }
+  .model-line { display:flex; align-items:center; gap:8px; }
+  .model-line .lbl { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.4px; flex:none; }
+  .model-picker { position:relative; flex:1; min-width:0; }
+  .model-trigger { width:100%; display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 9px; background:var(--bg); border:1px solid var(--border); border-radius:7px; font:12px var(--mono); text-align:left; }
+  .model-trigger:hover { border-color:var(--accent); }
+  .model-trigger .model-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .model-trigger .chev { color:var(--muted); flex:none; font-size:11px; }
+  .model-popover { position:absolute; z-index:40; top:calc(100% + 6px); right:0; left:auto; width:max(100%,330px); max-width:calc(100vw - 32px); background:var(--panel2); border:1px solid var(--border); border-radius:10px; box-shadow:0 16px 40px rgba(0,0,0,.45); overflow:hidden; }
+  .model-search { width:100%; border:0; border-bottom:1px solid var(--border); background:var(--bg); color:var(--text); padding:9px 10px; font:12px var(--mono); outline:none; }
+  .model-search:focus { box-shadow:inset 0 -2px 0 var(--accent); }
+  .model-list { max-height:300px; overflow:auto; padding:4px; }
+  .model-opt { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:0 8px; padding:6px 8px; border-radius:7px; cursor:pointer; }
+  .model-opt:hover, .model-opt.active { background:#233045; }
+  .model-opt.current { box-shadow:inset 2px 0 0 var(--ok); }
+  .mo-name { font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .model-opt.current .mo-name::after { content:" ✓"; color:var(--ok); }
+  .model-opt mark { background:rgba(210,153,34,.28); color:#f2cc60; border-radius:2px; padding:0 1px; }
+  .mo-id { grid-column:1; font:11px var(--mono); color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mo-ctx { grid-column:2; grid-row:1 / span 2; align-self:center; font:10.5px var(--mono); color:var(--muted); white-space:nowrap; }
+  .model-empty { padding:10px; color:var(--muted); font-size:12px; }
+  section { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; }
+  section h2 { margin:0 0 12px; font-size:15px; }
+  textarea { width:100%; min-height:92px; resize:vertical; background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px; font:13px/1.5 var(--mono); }
+  select { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:8px; font:inherit; width:100%; }
+  label.check { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12.5px; }
+  .send-row { display:flex; gap:10px; align-items:center; margin-top:10px; flex-wrap:wrap; }
+  .send-row .spacer { flex:1; }
+  .attachments { display:flex; flex-wrap:wrap; gap:10px; margin-top:10px; }
+  .att { position:relative; display:flex; align-items:center; gap:8px; padding:5px 9px 5px 5px; background:var(--bg); border:1px solid var(--border); border-radius:9px; }
+  .att img { width:64px; height:48px; object-fit:cover; border-radius:5px; display:block; background:#0b0f14; }
+  .att .att-meta { display:flex; flex-direction:column; gap:1px; font-size:11px; color:var(--muted); max-width:140px; }
+  .att .att-name { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; }
+  .att .att-rm { position:absolute; top:-7px; right:-7px; width:20px; height:20px; padding:0; border-radius:50%; font-size:12px; line-height:1; background:var(--panel2); border:1px solid var(--border); }
+  .paste-hint { margin-top:6px; font-size:11.5px; color:var(--muted); }
+  #img-overlay { z-index:50; cursor:zoom-out; }
+  #img-overlay img { max-width:92vw; max-height:90vh; border-radius:10px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
+  #confirm-overlay { z-index:60; }
+  #task-overlay { z-index:55; }
+  .task-card { width:min(760px,100%); max-height:82vh; display:flex; flex-direction:column; }
+  .task-card h2 { font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
+  .task-card .task-meta { margin:0 0 10px; font-size:12px; }
+  .task-card .task-full { flex:1; min-height:60px; margin:0 0 16px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font:12.5px/1.5 var(--mono); white-space:pre-wrap; overflow:auto; text-align:left; }
+  .confirm-card { width:min(460px,100%); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:20px 22px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
+  .confirm-card h2 { margin:0 0 8px; font-size:15px; }
+  .confirm-card p { margin:0 0 18px; color:var(--muted); font-size:13px; line-height:1.5; }
+  .confirm-card .row { justify-content:flex-end; }
+  .confirm-card .row button { flex:0 0 auto; min-width:104px; }
+  .confirm-card button.primary { background:#1f6feb; border-color:#1f6feb; }
+  .confirm-card button.primary:hover { background:#388bfd; }
+  .confirm-card button.danger { color:var(--bad); border-color:var(--bad); }
+  .confirm-card button.danger:hover { background:rgba(248,81,73,.12); }
+  .confirm-card button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .status { font-size:12.5px; color:var(--muted); min-height:18px; }
+  .status.err { color:var(--bad); }
+  .status.ok { color:var(--ok); }
+  .section-head { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .section-head h2 { margin:0; }
+  .section-head .spacer { flex:1; }
+  button.mini { padding:3px 9px; font-size:11.5px; }
+  button.mini.danger { color:var(--bad); }
+  button.mini.danger:hover { border-color:var(--bad); }
+  .talk-col { display:flex; flex-direction:column; gap:18px; min-width:0; }
+  .msg-wrap { position:relative; }
+  .cmd-menu { position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:25; max-height:280px; overflow-y:auto; background:var(--panel2); border:1px solid var(--border); border-radius:10px; box-shadow:0 16px 40px rgba(0,0,0,.45); padding:4px; }
+  .cmd-item { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 10px; padding:6px 8px; border-radius:7px; cursor:pointer; }
+  .cmd-item:hover, .cmd-item.active { background:#233045; }
+  .cmd-name { font:12.5px var(--mono); color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cmd-args { color:var(--muted); }
+  .cmd-src { align-self:center; font-size:10px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted); border:1px solid var(--border); border-radius:999px; padding:0 6px; }
+  .cmd-desc { grid-column:1 / span 2; font-size:11.5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cmd-status { padding:8px 10px; font-size:12px; color:var(--muted); }
+  .live-stream { flex:none; height:300px; min-height:120px; max-height:85vh; resize:vertical; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .ev-t.clamped { max-height:9.5em; overflow:hidden; }
+  .ev-t.clamped.one-line { max-height:1.45em; white-space:pre; word-break:normal; text-overflow:ellipsis; }
+  .ev[data-role="user"] { border-left:3px solid var(--accent); background:rgba(88,166,255,.10); border-radius:0 8px 8px 0; padding:8px 12px; margin-bottom:14px; }
+  .ev[data-role="user"] .ev-h { color:#79b8ff; font-weight:650; }
+  .ev-more { margin-top:4px; font-size:11px; padding:2px 8px; }
+  .badge.lost { color:var(--bad); border-color:var(--bad); }
+  .section-head.wrap { flex-wrap:wrap; row-gap:6px; }
+  .tasks { display:flex; flex-direction:column; gap:8px; max-height:420px; overflow:auto; padding-right:4px; }
+  .task-group { border-left:2px solid var(--border); padding-left:10px; }
+  .task-group h3 { font-size:12px; color:var(--muted); margin:4px 0 6px; text-transform:uppercase; letter-spacing:.4px; }
+  .task { all:unset; box-sizing:border-box; display:flex; gap:8px; width:100%; padding:4px 6px; border-radius:6px; font-size:12.5px; color:var(--text); cursor:pointer; }
+  .task:hover { background:#233045; }
+  .task:focus-visible { outline:2px solid var(--accent); outline-offset:0; }
+  .task .box { font-family:var(--mono); color:var(--warn); flex:none; }
+  .task .t { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; overflow-wrap:anywhere; }
+  .task .more { flex:none; align-self:flex-start; color:var(--muted); font-size:11px; opacity:0; }
+  .task:hover .more, .task:focus-visible .more { opacity:1; }
+  .task.done .box { color:var(--ok); }
+  .task.done span.t { color:var(--muted); text-decoration:line-through; text-decoration-color:#30363d; }
+  .overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; padding:24px; z-index:20; }
+  .overlay.show { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--border); border-radius:12px; width:min(1200px,100%); height:88vh; display:flex; flex-direction:column; overflow:hidden; }
+  .modal header { position:static; background:var(--panel); padding:10px 14px; gap:10px; }
+  .modal header h2 { font-size:14px; margin:0; font-family:var(--mono); }
+  .modal header .check { white-space:nowrap; }
+  .stream { flex:1; overflow:auto; background:#0b0f14; padding:12px 16px; scroll-behavior:auto; }
+  .stream-empty { color:var(--muted); font-size:13px; }
+  .ev { margin:0 0 12px; border-left:2px solid var(--border); padding-left:10px; }
+  .ev-h { font:11px var(--mono); color:var(--muted); margin-bottom:3px; user-select:none; }
+  .ev-t { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.45 var(--mono); color:#c9d1d9; }
+  .ev-user { border-left-color:#58a6ff; }
+  .ev-user .ev-h { color:#79b8ff; }
+  .ev-assistant { border-left-color:#3fb950; }
+  .ev-tool { border-left-color:#d29922; }
+  .ev-tool .ev-t { color:#e3b341; }
+  .ev-result { border-left-color:#8b949e; }
+  .ev-result .ev-t { color:#a8b3bd; }
+  .ev-thinking { border-left-color:#6e40c9; }
+  .ev-thinking .ev-t { color:#9e8ab5; font-style:italic; }
+  .ev-model { border-left-color:#f778ba; }
+  .ev-session { border-left-color:#f778ba; }
+  .ev-system .ev-t { color:var(--muted); }
+  .toast { position:fixed; right:18px; bottom:18px; max-width:min(420px,90vw); background:var(--panel2); border:1px solid var(--border); border-left:3px solid var(--accent); border-radius:10px; padding:10px 14px; font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,.4); opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity .15s, transform .15s; z-index:30; }
+  .toast.show { opacity:1; transform:none; }
+  .toast.err { border-left-color:var(--bad); }
+
+  /* login */
+  #login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .login-card { width:min(380px,100%); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:26px; box-shadow:0 20px 60px rgba(0,0,0,.35); }
+  .login-card h1 { font-size:19px; margin:0 0 4px; }
+  .login-card p.sub { margin:0 0 20px; color:var(--muted); font-size:13px; }
+  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+  .field label { font-size:12.5px; color:var(--muted); }
+  .field input { background:var(--bg); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:10px 11px; font:inherit; }
+  .field input:focus { outline:2px solid var(--accent); outline-offset:-1px; border-color:transparent; }
+  .login-card button { width:100%; padding:10px; margin-top:4px; font-weight:600; }
+  .login-msg { min-height:20px; margin:10px 0 0; font-size:12.5px; }
+  .login-note { margin-top:18px; padding-top:14px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+
+<div id="login">
+  <form class="login-card" id="login-form" autocomplete="on">
+    <h1>multiagent-harness · console</h1>
+    <p class="sub">Sign in with your Linux account on this machine.</p>
+    <div class="field">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+    </div>
+    <div class="field">
+      <label for="otp">Authenticator code</label>
+      <input id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,8}" maxlength="8" placeholder="6-digit code" required>
+    </div>
+    <button class="primary" id="login-btn" type="submit">Sign in</button>
+    <p class="login-msg" id="login-msg" role="alert"></p>
+    <div class="login-note">Password is checked by the system PAM stack; the 6-digit authenticator code is also required. Repeated failures lock the account.</div>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <span class="dot" id="herdr-dot"></span>
+    <h1>multiagent-harness · multi-agent console</h1>
+    <span class="badge" id="ws-label">–</span>
+    <span class="spacer"></span>
+    <span class="badge" id="who">–</span>
+    <small id="updated">loading…</small>
+    <button id="refresh">Refresh</button>
+    <button id="reset-all" class="danger" title="Start fresh pi sessions for every idle agent">Reset all agents</button>
+    <button id="logout">Log out</button>
+  </header>
+
+  <div class="shell">
+  <aside class="sidebar" id="sidebar" aria-label="Agents">
+    <div class="section-head">
+      <h2>Agents</h2>
+      <span class="spacer"></span>
+      <button id="sidebar-toggle" class="mini" type="button" aria-controls="sidebar" aria-expanded="true" title="Collapse agents sidebar">‹</button>
+    </div>
+    <div class="agents" id="agents"></div>
+    <div class="rail-dots" id="sidebar-dots"></div>
+  </aside>
+
+  <main>
+    <div class="talk-col">
+    <section>
+      <div class="section-head wrap">
+        <h2 id="live-title">live</h2>
+        <span class="badge" id="live-status">idle</span>
+        <span class="spacer"></span>
+        <label class="check"><input type="checkbox" data-filter="thinking" id="live-thinking" checked> thinking</label>
+        <label class="check"><input type="checkbox" data-filter="tool" id="live-tools" checked> tool calls</label>
+        <label class="check"><input type="checkbox" data-filter="result" id="live-results" checked> tool results</label>
+        <button id="live-latest" class="mini" hidden>Latest</button>
+      </div>
+      <div class="stream live-stream" id="live-body"><p class="stream-empty">Loading…</p></div>
+    </section>
+
+    <section>
+        <h2>Talk to an agent <span class="muted" style="font-weight:400">· coordinator plans and delegates, workers implement, reviewer audits</span></h2>
+        <select id="target"></select>
+        <div style="height:8px"></div>
+        <div class="msg-wrap">
+        <textarea id="message" placeholder="Short, self-contained task. State the repo, the goal, and what done looks like. Paste screenshots with Ctrl+V."></textarea>
+        <div class="cmd-menu" id="cmd-menu" role="listbox" hidden></div>
+      </div>
+        <div class="attachments" id="attachments" hidden></div>
+        <div class="paste-hint">Type / for commands and skills · Paste screenshots (Ctrl+V) · up to 4 · 6 MB each · 12 MB total · use a vision model</div>
+        <div class="send-row">
+          <label class="check"><input type="checkbox" id="wait"> wait for agent to go idle</label>
+          <span class="spacer"></span>
+          <span class="status" id="send-status"></span>
+          <button class="primary" id="send">Send</button>
+        </div>
+      </section>
+    </div>
+
+    <section>
+      <div class="section-head">
+        <h2>Task queue <span class="muted" style="font-weight:400">· tasks.md</span></h2>
+        <span class="spacer"></span>
+        <button id="clear-tasks" class="mini danger" title="Archive and clear tasks.md">Clear</button>
+      </div>
+      <div class="tasks" id="tasks"><p class="muted">loading…</p></div>
+    </section>
+  </main>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="overlay" id="img-overlay"><img id="img-full" alt="Pasted screenshot preview"></div>
+
+  <div class="overlay" id="task-overlay" role="dialog" aria-modal="true" aria-labelledby="task-title" aria-describedby="task-full">
+    <div class="confirm-card task-card">
+      <h2 id="task-title">Task</h2>
+      <p class="task-meta" id="task-meta"></p>
+      <pre class="task-full" id="task-full"></pre>
+      <div class="row">
+        <button id="task-close" type="button">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
+    <div class="confirm-card">
+      <h2 id="confirm-title">Are you sure?</h2>
+      <p id="confirm-text"></p>
+      <div class="row">
+        <button id="confirm-cancel" type="button">Cancel</button>
+        <button id="confirm-ok" type="button" class="danger">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="modal">
+      <header>
+        <h2 id="tail-title">live</h2>
+        <span class="badge" id="tail-status">connecting</span>
+        <span class="spacer" style="flex:1"></span>
+        <label class="check"><input type="checkbox" data-filter="thinking" id="show-thinking" checked> thinking</label>
+        <label class="check"><input type="checkbox" data-filter="tool" id="show-tools" checked> tool calls</label>
+        <label class="check"><input type="checkbox" data-filter="result" id="show-results" checked> tool results</label>
+        <button id="tail-latest" hidden>Latest</button>
+        <button id="tail-close">Close</button>
+      </header>
+      <div class="stream" id="tail-body"><p class="stream-empty">Connecting…</p></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let me = null;
+  let poll = null;
+  let paneStatus = {}; // pane id -> agent status, from the latest /api/state
+  let models = [];
+  let modelsLoaded = false;
+  let pendingImages = [];
+  const LS = { wait: 'mah.waitIdle', target: 'mah.target', thinking: 'mah.showThinking', sidebar: 'mah.sidebarCollapsed', liveHeight: 'mah.liveHeight' };
+  let draftPane = null;
+  let draftTimer = null;
+  const targetKey = () => `mah.target.${me ? me.username : 'anon'}`;
+  const draftKey = (pane) => `mah.draft.${me ? me.username : 'anon'}.${pane}`;
+  const MAX_IMAGES = 4;
+  const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+  let openPicker = null;
+  let modelsLoading = false;
+
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const hhmmss = (ts) => { try { return new Date(ts).toLocaleTimeString([], { hour12:false }); } catch { return ''; } };
+
+  async function api(path, opts = {}) {
+    const headers = { 'content-type': 'application/json', ...(opts.headers || {}) };
+    if (me && me.csrf) headers['x-csrf-token'] = me.csrf;
+    // A stuck request must never leave a button disabled forever: time out and
+    // surface the failure so the caller's finally can re-enable the UI.
+    const timeout = Number.isFinite(opts.timeout) ? opts.timeout : 30000;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    let res;
+    try {
+      res = await fetch(path, { ...opts, headers, credentials: 'same-origin', signal: ctrl.signal });
+    } catch (e) {
+      if (ctrl.signal.aborted) throw new Error(`${path} timed out after ${Math.round(timeout / 1000)}s — reload the page`);
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 401) { showLogin('Your session expired. Sign in again.'); throw new Error('unauthenticated'); }
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  }
+
+  // In-page confirmation. Native confirm() can be silently suppressed by the
+  // browser ("prevent additional dialogs"), which makes the button look dead,
+  // and blocks the whole tab while it is open. This one cannot.
+  let confirmOpen = false;
+
+  function askConfirm({ title, message = '', confirmLabel = 'Confirm', danger = false } = {}) {
+    return new Promise((resolve) => {
+      const overlay = $('confirm-overlay');
+      const ok = $('confirm-ok');
+      const cancel = $('confirm-cancel');
+      $('confirm-title').textContent = title || 'Are you sure?';
+      $('confirm-text').textContent = message;
+      ok.textContent = confirmLabel;
+      ok.className = danger ? 'danger' : 'primary';
+      confirmOpen = true;
+      overlay.classList.add('show');
+      ok.focus();
+      let settled = false;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        confirmOpen = false;
+        overlay.classList.remove('show');
+        ok.onclick = cancel.onclick = overlay.onclick = null;
+        document.removeEventListener('keydown', onKey, true);
+        resolve(value);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+        else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); finish(true); }
+      };
+      ok.onclick = () => finish(true);
+      cancel.onclick = () => finish(false);
+      overlay.onclick = (e) => { if (e.target === overlay) finish(false); };
+      document.addEventListener('keydown', onKey, true);
+    });
+  }
+
+  // Shared helper: run an action with a busy label so a slow/stuck request is
+  // visible, and always restore the button afterwards.
+  async function withBusy(btn, label, fn) {
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = label;
+    try {
+      return await fn();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+
+  function saveDraftFor(pane) {
+    if (!pane) return;
+    const value = $('message').value;
+    if (value.trim()) localStorage.setItem(draftKey(pane), value);
+    else localStorage.removeItem(draftKey(pane));
+  }
+
+  function switchDraft(pane) {
+    if (!pane) {
+      saveDraftFor(draftPane);
+      draftPane = null;
+      $('message').value = '';
+      return;
+    }
+    if (pane === draftPane) return;
+    saveDraftFor(draftPane);
+    draftPane = pane;
+    $('message').value = localStorage.getItem(draftKey(pane)) || '';
+  }
+
+  function selectTarget(pane) {
+    if (!pane) return;
+    $('target').value = pane;
+    localStorage.setItem(targetKey(), pane);
+    switchDraft(pane);
+    syncLive();
+  }
+
+  function showLogin(message = '') {
+    saveDraftFor(draftPane);
+    draftPane = null;
+    me = null;
+    closeModelPicker();
+    closeStream();
+    liveTail.close();
+    clearAttachments();
+    if (poll) { clearInterval(poll); poll = null; }
+    $('app').hidden = true;
+    $('login').hidden = false;
+    $('login-msg').textContent = message;
+    $('login-msg').className = 'login-msg err';
+    $('password').value = '';
+    setTimeout(() => $('username').focus(), 30);
+  }
+
+  function showApp(account) {
+    me = account;
+    $('login').hidden = true;
+    $('app').hidden = false;
+    $('who').textContent = account.username;
+    $('login-msg').textContent = '';
+    loadModels();
+    refresh();
+    if (poll) clearInterval(poll);
+    poll = setInterval(() => {
+      if (document.hidden || $('overlay').classList.contains('show') || isEditing()) return;
+      refresh();
+    }, 5000);
+  }
+
+  function isEditing() {
+    if (openPicker) return true;
+    const el = document.activeElement;
+    return !!el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && $('app').contains(el);
+  }
+
+  async function loadModels() {
+    if (modelsLoaded || modelsLoading) return;
+    modelsLoading = true;
+    try {
+      const c = await api('/api/models');
+      models = c.list || [];
+      modelsLoaded = models.length > 0;
+    } catch (e) {
+      // the trigger still shows the current model; refresh() retries
+    } finally {
+      modelsLoading = false;
+    }
+  }
+
+  function closeModelPicker() {
+    if (!openPicker) return;
+    const { el, trigger } = openPicker;
+    const pop = el && el.querySelector('.model-popover');
+    if (pop) { pop.hidden = true; pop.innerHTML = ''; }
+    if (trigger) trigger.setAttribute('aria-expanded', 'false');
+    openPicker = null;
+  }
+
+  function toggleModelPicker(pane, role, trigger) {
+    const picker = trigger.closest('.model-picker');
+    if (!picker) return;
+    if (openPicker && openPicker.el === picker) { closeModelPicker(); return; }
+    closeModelPicker();
+    const pop = picker.querySelector('.model-popover');
+    pop.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    openPicker = { el: picker, trigger, pane, role, index: -1, filtered: [] };
+    buildModelPicker(picker);
+    if (!modelsLoaded) {
+      loadModels().then(() => {
+        if (openPicker && openPicker.el === picker) buildModelPicker(picker);
+      });
+    }
+    const search = pop.querySelector('.model-search');
+    if (search) search.focus();
+  }
+
+  function buildModelPicker(picker) {
+    const pop = picker.querySelector('.model-popover');
+    const current = picker.dataset.modelCurrent || '';
+    const pane = openPicker ? openPicker.pane : '';
+    const listId = 'model-list-' + pane.replace(/[^a-zA-Z0-9]/g, '');
+    pop.innerHTML = '';
+
+    const search = document.createElement('input');
+    search.className = 'model-search';
+    search.type = 'search';
+    search.placeholder = models.length ? `Search ${models.length} models…` : 'Search models…';
+    search.title = 'Tip: separate words to match independently — e.g. “deep 1017”';
+    search.autocomplete = 'off';
+    search.spellcheck = false;
+    search.setAttribute('role', 'combobox');
+    search.setAttribute('aria-autocomplete', 'list');
+    search.setAttribute('aria-controls', listId);
+
+    const list = document.createElement('div');
+    list.className = 'model-list';
+    list.id = listId;
+    list.setAttribute('role', 'listbox');
+
+    pop.append(search, list);
+
+    const choose = (id) => {
+      if (!openPicker) return;
+      const { pane: p, role: r } = openPicker;
+      closeModelPicker();
+      applyModel(p, r, id);
+    };
+
+    const highlight = () => {
+      const rows = list.querySelectorAll('.model-opt');
+      rows.forEach((row, i) => row.classList.toggle('active', i === openPicker.index));
+      const active = rows[openPicker.index];
+      if (active) {
+        active.scrollIntoView({ block: 'nearest' });
+        search.setAttribute('aria-activedescendant', active.id || '');
+      } else {
+        search.removeAttribute('aria-activedescendant');
+      }
+    };
+
+    const escapeRe = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const fillMatch = (el, text, tokens) => {
+      if (!tokens.length) { el.textContent = text; return; }
+      const re = new RegExp(`(${tokens.map(escapeRe).join('|')})`, 'ig');
+      let last = 0;
+      let m;
+      while ((m = re.exec(text))) {
+        if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+        const mark = document.createElement('mark');
+        mark.textContent = m[0];
+        el.appendChild(mark);
+        last = m.index + m[0].length;
+        if (m.index === re.lastIndex) re.lastIndex += 1;
+      }
+      if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+    };
+
+    const render = () => {
+      if (!openPicker) return;
+      const q = search.value.trim().toLowerCase();
+      const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+      let filtered;
+      if (!tokens.length) {
+        filtered = models.slice();
+      } else {
+        const scored = [];
+        for (const m of models) {
+          const id = m.id.toLowerCase();
+          const name = String(m.name || '').toLowerCase();
+          const hay = id + ' ' + name;
+          // every whitespace-separated term must match somewhere
+          if (!tokens.every((t) => hay.includes(t))) continue;
+          let score = 0;
+          if (id === q) score += 1000;
+          if (id.startsWith(q)) score += 300;
+          if (id.includes(q)) score += 120;
+          for (const t of tokens) {
+            const pos = id.indexOf(t);
+            if (pos === 0) score += 40;
+            else if (pos > 0) score += 20;
+            else if (name.includes(t)) score += 8;
+          }
+          if (id.startsWith('~')) score -= 60;
+          score -= id.length * 0.05;
+          scored.push({ m, score });
+        }
+        scored.sort((a, b) => b.score - a.score || a.m.id.localeCompare(b.m.id));
+        filtered = scored.map((x) => x.m);
+      }
+      openPicker.filtered = filtered;
+      list.innerHTML = '';
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'model-empty';
+        empty.textContent = models.length ? `No models match “${search.value}”` : 'Model catalog unavailable';
+        list.appendChild(empty);
+        openPicker.index = -1;
+        search.removeAttribute('aria-activedescendant');
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      filtered.forEach((m, i) => {
+        const row = document.createElement('div');
+        row.className = 'model-opt' + (m.id === current ? ' current' : '');
+        row.id = 'mopt-' + pane.replace(/[^a-zA-Z0-9]/g, '') + '-' + i;
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', m.id === current ? 'true' : 'false');
+        row.dataset.model = m.id;
+        const name = document.createElement('span');
+        name.className = 'mo-name';
+        fillMatch(name, m.name || m.id, tokens);
+        const id = document.createElement('span');
+        id.className = 'mo-id';
+        fillMatch(id, m.id, tokens);
+        const ctx = document.createElement('span');
+        ctx.className = 'mo-ctx';
+        ctx.textContent = m.context ? `${Math.round(m.context / 1000)}k` : '';
+        row.append(name, id, ctx);
+        frag.appendChild(row);
+      });
+      list.appendChild(frag);
+      const curIdx = filtered.findIndex((m) => m.id === current);
+      openPicker.index = curIdx >= 0 ? curIdx : 0;
+      highlight();
+    };
+
+    search.addEventListener('input', render);
+    search.addEventListener('keydown', (ev) => {
+      if (!openPicker) return;
+      const n = openPicker.filtered.length;
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        if (n) { openPicker.index = (openPicker.index + 1) % n; highlight(); }
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (n) { openPicker.index = (openPicker.index - 1 + n) % n; highlight(); }
+      } else if (ev.key === 'Enter') {
+        ev.preventDefault();
+        const m = openPicker.filtered[openPicker.index];
+        if (m) choose(m.id);
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        const trigger = openPicker.trigger;
+        closeModelPicker();
+        if (trigger) trigger.focus();
+      } else if (ev.key === 'Tab') {
+        ev.preventDefault();
+        const trigger = openPicker.trigger;
+        closeModelPicker();
+        if (trigger) trigger.focus();
+      }
+    });
+    list.addEventListener('click', (ev) => {
+      const row = ev.target.closest('.model-opt');
+      if (row) choose(row.dataset.model);
+    });
+    render();
+  }
+
+  function renderAgents(s) {
+    const order = { coordinator: 0, backender: 1, reviewer: 2, frontender: 3 };
+    const panes = [...s.panes].sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9));
+    const agentCount = panes.filter((p) => p.agent).length;
+    $('agents').innerHTML = panes.map((p) => {
+      const hint = (p.role === 'coordinator' || p.role === 'reviewer') && !p.agent
+        ? `<p class="muted" style="font-size:12px;margin:0">Not running. Start it with <code>.pi/multiagent/bootstrap.sh --start-agents</code>.</p>`
+        : '';
+      const working = p.status === 'working';
+      const canChangeModel = !!p.agent && !working;
+      // Never offer to delete the last agent: a live agent is the only way to create new ones.
+      const canDelete = !!p.agent && agentCount > 1;
+      const delTitle = canDelete
+        ? `Delete the ${p.role} agent (closes its pane/tab)`
+        : 'Cannot delete the last agent: a live agent is the only way to create new ones';
+      return `<article class="card" data-pane="${esc(p.pane_id)}">
+        <h2>${esc(p.role)} <span class="badge ${esc(p.status)}">${esc(p.status)}</span>${p.agent
+          ? `<button class="card-del" data-del="${esc(p.pane_id)}" data-role="${esc(p.role)}" title="${esc(delTitle)}" aria-label="Delete the ${esc(p.role)} agent" ${canDelete ? '' : 'disabled'}>×</button>`
+          : ''}</h2>
+        ${hint}
+        <dl class="kv">
+          <dt>call-sign</dt><dd>${esc((s.memory.agents?.[p.role]?.call_sign) || '–')}</dd>
+          <dt>pane</dt><dd>${esc(p.pane_id)}</dd>
+          <dt>agent</dt><dd>${esc(p.agent || 'shell')}</dd>
+          <dt>cwd</dt><dd><button class="open-dir" data-explore="${esc(p.cwd)}" title="Browse ${esc(p.cwd)} in a new tab">${esc(p.cwd.replace(/^.*\/html\//, ''))}</button></dd>
+          ${p.repo ? `<dt>branch</dt><dd title="${esc(p.repo.last_commit)}">${esc(p.repo.branch)}${p.repo.dirty ? ` · ${p.repo.dirty} dirty` : ''}</dd>` : ''}
+        </dl>
+        ${p.agent ? `<div class="model-line">
+          <span class="lbl">model</span>
+          <div class="model-picker" data-model-picker="${esc(p.pane_id)}" data-model-current="${esc(p.model || '')}">
+            <button class="model-trigger" data-model-open="${esc(p.pane_id)}" data-role="${esc(p.role)}" aria-haspopup="listbox" aria-expanded="false" title="${esc(p.model || 'Select a model')}" ${canChangeModel ? '' : 'disabled'}>
+              <span class="model-label">${esc(p.model || 'Select model')}</span><span class="chev">▾</span>
+            </button>
+            <div class="model-popover" hidden></div>
+          </div>
+        </div>` : ''}
+        <div class="row">
+          <button data-tail="${esc(p.pane_id)}" data-role="${esc(p.role)}" ${p.agent ? '' : 'disabled'}>Tail</button>
+          <button data-focus="${esc(p.pane_id)}" ${p.agent ? '' : 'disabled'} title="Select this agent and focus the message box">Focus</button>
+          ${working
+            ? `<button data-stop="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" title="Interrupt the running turn (sends Esc)">Stop</button>`
+            : `<button data-reset="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" ${p.agent ? '' : 'disabled'}>Reset</button>`}
+        </div>
+      </article>`;
+    }).join('');
+
+    $('sidebar-dots').innerHTML = panes.map((p) =>
+      `<span class="rail-dot ${esc(p.status)}" title="${esc(p.role)} · ${esc(p.status)}"></span>`).join('');
+
+    paneStatus = Object.fromEntries(panes.map((p) => [p.pane_id, p.status]));
+    modalTail.renderStatus();
+    liveTail.renderStatus();
+
+    const agents = panes.filter((p) => p.agent);
+    const cur = $('target').value || localStorage.getItem(targetKey()) || '';
+    $('target').innerHTML = agents.map((p) =>
+      `<option value="${esc(p.pane_id)}" data-role="${esc(p.role)}">${esc(p.role)} · ${esc(p.pane_id)} (${esc(p.status)})</option>`).join('');
+    if (cur && agents.some((p) => p.pane_id === cur)) $('target').value = cur;
+    const active = $('target').value;
+    if (active) {
+      if (localStorage.getItem(targetKey()) !== active) localStorage.setItem(targetKey(), active);
+      if (active !== draftPane) switchDraft(active);
+    }
+    syncLive();
+  }
+
+  let tasksData = [];
+  let taskOpen = false;
+
+  function fullTaskText(t) {
+    return [t.text, t.detail].filter(Boolean).join('\n');
+  }
+
+  function openTask(index) {
+    const t = tasksData[index];
+    if (!t) return;
+    $('task-title').textContent = t.section || 'Task';
+    $('task-meta').textContent = `${t.done ? 'Done' : 'Open'} · ${t.section || 'Task'} · Esc or click outside to close`;
+    $('task-full').textContent = fullTaskText(t);
+    taskOpen = true;
+    $('task-overlay').classList.add('show');
+    $('task-close').focus();
+  }
+
+  function closeTask() {
+    if (!taskOpen) return;
+    taskOpen = false;
+    $('task-overlay').classList.remove('show');
+  }
+
+  function renderTasks(s) {
+    tasksData = s.tasks;
+    if (!s.tasks.length) { $('tasks').innerHTML = '<p class="muted">No tasks queued.</p>'; return; }
+    const groups = [];
+    for (const t of s.tasks) {
+      let g = groups.find((x) => x.name === t.section);
+      if (!g) { g = { name: t.section, items: [] }; groups.push(g); }
+      g.items.push(t);
+    }
+    $('tasks').innerHTML = groups.map((g) => `<div class="task-group">
+      <h3>${esc(g.name || 'Tasks')}</h3>
+      ${g.items.map((t) => `<button type="button" class="task ${t.done ? 'done' : ''}" data-task="${tasksData.indexOf(t)}" title="Click to read the full task">
+        <span class="box">${t.done ? '☑' : '☐'}</span><span class="t">${esc(t.text)}</span><span class="more">⤢</span></button>`).join('')}
+    </div>`).join('');
+  }
+
+  // Shows seconds since the last successful refresh; ticked every second so it stays current between polls.
+  let lastUpdatedAt = null;
+  function renderUpdated() {
+    if (lastUpdatedAt === null) return;
+    const secs = Math.max(0, Math.floor((Date.now() - lastUpdatedAt) / 1000));
+    $('updated').textContent = `updated ${secs}s ago`;
+  }
+  setInterval(renderUpdated, 1000);
+
+  async function refresh() {
+    if (!me) return;
+    if (openPicker) closeModelPicker();
+    try {
+      const s = await api('/api/state');
+      $('herdr-dot').className = 'dot up';
+      $('ws-label').textContent = s.workspace ? s.workspace.label : 'no workspace';
+      lastUpdatedAt = Date.now();
+      renderUpdated();
+      renderAgents(s);
+      renderTasks(s);
+      if (!modelsLoaded) loadModels();
+    } catch (e) {
+      if (!me) return;
+      $('herdr-dot').className = 'dot down';
+      lastUpdatedAt = null;
+      $('updated').textContent = 'herdr unreachable';
+      $('agents').innerHTML = `<article class="card"><h2>Disconnected</h2><p class="err">${esc(e.message)}</p><p class="muted">Is the herdr server running? Run .pi/multiagent/bootstrap.sh</p></article>`;
+    }
+  }
+
+  // ---------- live stream ----------
+
+  const nearBottom = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+
+  function eventNode(ev) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ev ev-' + (ev.kind || 'system');
+    wrap.dataset.kind = ev.kind || 'system';
+    if (ev.role) wrap.dataset.role = ev.role;
+    const head = document.createElement('div');
+    head.className = 'ev-h';
+    const label = ev.kind === 'result' ? 'tool result' : ev.kind === 'tool' ? 'tool call'
+      : ev.kind === 'thinking' ? `${ev.role || 'assistant'} (thinking)` : (ev.role || ev.kind || 'log');
+    head.textContent = `${label} · ${hhmmss(ev.ts)}`;
+    const body = document.createElement('pre');
+    body.className = 'ev-t';
+    body.textContent = String(ev.text || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
+    wrap.append(head, body);
+    // Tool calls, tool results and thinking are always folded to one line. Messages
+    // (user and assistant) are shown in full. Anything else folds when long.
+    const isMessage = ev.kind === 'text' || ev.kind === 'user' || ev.kind === 'assistant';
+    const oneLine = ev.kind === 'tool' || ev.kind === 'result' || ev.kind === 'thinking';
+    const long = body.textContent.split('\n').length > 8 || body.textContent.length > 700;
+    if (oneLine || (!isMessage && long)) {
+      body.classList.add('clamped');
+      if (oneLine) body.classList.add('one-line');
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'mini ev-more';
+      more.textContent = 'show more';
+      more.onclick = () => {
+        const expanding = body.classList.contains('clamped');
+        body.classList.toggle('clamped', !expanding);
+        body.classList.toggle('one-line', !expanding && oneLine);
+        more.textContent = expanding ? 'show less' : 'show more';
+      };
+      wrap.append(more);
+    }
+    return wrap;
+  }
+
+  // A tail owns one EventSource, its scroll-stick state and a set of DOM elements.
+  // Two instances: the Tail modal (#tail-*) and the inline live card (#live-*).
+  // Feed filters: one checkbox per kind in each feed header (data-filter="<kind>").
+  const FILTER_KEYS = { thinking: LS.thinking, tool: 'mah.showToolCalls', result: 'mah.showToolResults' };
+  const filterOn = Object.fromEntries(Object.entries(FILTER_KEYS).map(([k, key]) => [k, localStorage.getItem(key) !== '0']));
+
+  function makeTail(v) {
+    const t = { v, stream: null, stick: true, pane: null, role: null, conn: 'idle' };
+    t.setStatus = (text, cls) => {
+      v.status.textContent = text;
+      v.status.className = 'badge ' + (cls || '');
+    };
+    t.setTitle = () => {
+      v.title.textContent = `live · ${t.role} · ${t.pane}`;
+    };
+    // Connection state and agent state are shown separately: the stream may be
+    // up while the agent is idle, or down while the agent keeps working.
+    t.renderStatus = () => {
+      if (!t.pane) return;
+      const a = paneStatus[t.pane] || 'gone';
+      if (t.conn === 'live') return t.setStatus(`live · ${a}`, a);
+      if (t.stream && t.stream.readyState === EventSource.CLOSED) return t.setStatus(`connection lost · agent ${a}`, 'lost');
+      if (t.conn === 'connecting') return t.setStatus('connecting…', '');
+      t.setStatus(`reconnecting · agent ${a}`, 'reconnecting');
+    };
+    t.setEmpty = (text) => {
+      v.body.innerHTML = `<p class="stream-empty">${text}</p>`;
+    };
+    t.scrollLatest = () => {
+      v.body.scrollTop = v.body.scrollHeight;
+      t.stick = true;
+      v.latest.hidden = true;
+    };
+    t.appendEvents = (events) => {
+      if (!events || !events.length) return;
+      const stick = t.stick;
+      const frag = document.createDocumentFragment();
+      for (const ev of events) {
+        const node = eventNode(ev);
+        if (filterOn[ev.kind] === false) node.hidden = true;
+        frag.appendChild(node);
+      }
+      if (!v.body.querySelector('.ev')) v.body.innerHTML = '';
+      v.body.appendChild(frag);
+      if (stick) t.scrollLatest();
+      else v.latest.hidden = false;
+    };
+    t.renderSnapshot = (events) => {
+      t.stick = true;
+      v.body.innerHTML = '';
+      if (!events || !events.length) return t.setEmpty('Waiting for the first message…');
+      t.appendEvents(events);
+      t.scrollLatest();
+    };
+    t.close = () => {
+      if (t.stream) { t.stream.close(); t.stream = null; }
+    };
+    t.open = (pane, role) => {
+      t.close();
+      t.pane = pane;
+      t.role = role;
+      t.stick = true;
+      t.setTitle();
+      t.conn = 'connecting';
+      t.setEmpty('Connecting…');
+      t.renderStatus();
+      const es = new EventSource('/api/stream?pane=' + encodeURIComponent(pane));
+      t.stream = es;
+      es.onopen = () => { t.conn = 'live'; t.renderStatus(); };
+      es.onerror = () => { t.conn = 'reconnecting'; t.renderStatus(); };
+      es.addEventListener('session', (e) => {
+        try {
+          const d = JSON.parse(e.data);
+          t.setTitle();
+          if (d.path) v.title.title = d.path;
+          // /new (or an agent restart) switches the session file: drop the old
+          // transcript immediately. A following snapshot/append fills the new one.
+          t.stick = true;
+          t.setEmpty('New session — waiting for output…');
+          v.latest.hidden = true;
+        } catch {}
+      });
+      es.addEventListener('snapshot', (e) => {
+        try { t.renderSnapshot(JSON.parse(e.data).events); } catch {}
+      });
+      es.addEventListener('append', (e) => {
+        try { t.appendEvents(JSON.parse(e.data).events); } catch {}
+      });
+    };
+    v.body.addEventListener('scroll', () => {
+      t.stick = nearBottom(v.body);
+      v.latest.hidden = t.stick;
+    });
+    v.latest.onclick = t.scrollLatest;
+    return t;
+  }
+
+  const modalTail = makeTail({ body: $('tail-body'), status: $('tail-status'), title: $('tail-title'), latest: $('tail-latest') });
+  const liveTail = makeTail({ body: $('live-body'), status: $('live-status'), title: $('live-title'), latest: $('live-latest') });
+
+  function openTail(pane, role) {
+    modalTail.open(pane, role);
+    $('overlay').classList.add('show');
+  }
+
+  function closeStream() {
+    modalTail.close();
+    $('overlay').classList.remove('show');
+  }
+
+  // Outline the agent card that "Talk to an agent" is currently aimed at.
+  function markFocusedAgent() {
+    const pane = $('target').value;
+    for (const card of document.querySelectorAll('.sidebar .card')) {
+      card.classList.toggle('focused', card.dataset.pane === pane);
+    }
+  }
+
+  // The inline live card follows the agent selected in "Talk to an agent".
+  function syncLive() {
+    markFocusedAgent();
+    const opt = $('target').selectedOptions[0];
+    if (!opt || !opt.value) {
+      liveTail.close();
+      liveTail.pane = null;
+      liveTail.role = null;
+      $('live-title').textContent = 'live';
+      liveTail.setStatus('no agent', '');
+      liveTail.setEmpty('Select an agent to see its live output.');
+      $('live-latest').hidden = true;
+      return;
+    }
+    if (opt.value === liveTail.pane && liveTail.stream && liveTail.stream.readyState !== EventSource.CLOSED) return;
+    liveTail.open(opt.value, opt.dataset.role);
+  }
+
+  // Show or hide every event of one kind in both feeds (Tail modal and live card).
+  function setFilter(kind, show) {
+    filterOn[kind] = show;
+    localStorage.setItem(FILTER_KEYS[kind], show ? '1' : '0');
+    for (const cb of document.querySelectorAll(`[data-filter="${kind}"]`)) cb.checked = show;
+    for (const t of [modalTail, liveTail]) {
+      for (const el of t.v.body.querySelectorAll(`.ev[data-kind="${kind}"]`)) el.hidden = !show;
+      if (t.stick) t.scrollLatest();
+    }
+  }
+  for (const cb of document.querySelectorAll('[data-filter]')) {
+    cb.checked = filterOn[cb.dataset.filter];
+    cb.onchange = () => setFilter(cb.dataset.filter, cb.checked);
+  }
+
+  // The live card is resized with its native bottom-edge handle; the height is kept per browser.
+  const liveBody = $('live-body');
+  const savedLiveH = parseInt(localStorage.getItem(LS.liveHeight), 10);
+  if (savedLiveH > 0) liveBody.style.height = savedLiveH + 'px';
+  new ResizeObserver(() => {
+    const h = Math.round(liveBody.getBoundingClientRect().height);
+    if (h > 0) localStorage.setItem(LS.liveHeight, String(h));
+  }).observe(liveBody);
+
+  // ---------- actions ----------
+
+  let toastTimer = null;
+  function toast(message, isError = false) {
+    const el = $('toast');
+    el.textContent = message;
+    el.className = 'toast show' + (isError ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = 'toast'; }, 4000);
+  }
+
+  async function clearTasks() {
+    const confirmed = await askConfirm({
+      title: 'Clear the task queue?',
+      message: 'The current tasks.md is archived first, then replaced with an empty template.',
+      confirmLabel: 'Clear queue',
+    });
+    if (!confirmed) return;
+    try {
+      await withBusy($('clear-tasks'), 'Clearing…', async () => {
+        const r = await api('/api/tasks/clear', { method: 'POST' });
+        toast(r.archived ? `Queue cleared · archived ${r.archived}` : 'Queue cleared');
+        setTimeout(refresh, 300);
+      });
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  async function resetAll() {
+    const confirmed = await askConfirm({
+      title: 'Reset all agents?',
+      message: 'This starts fresh pi sessions and discards their context. Agents currently working are skipped.',
+      confirmLabel: 'Reset all',
+      danger: true,
+    });
+    if (!confirmed) return;
+    const btn = $('reset-all');
+    btn.disabled = true;
+    btn.textContent = 'Resetting…';
+    try {
+      const r = await api('/api/reset-all', { method: 'POST', timeout: 90000 });
+      const results = r.results || [];
+      if (!results.length) {
+        toast('No agents to reset.');
+      } else {
+        const done = results.filter((x) => x.status === 'reset');
+        const skipped = results.filter((x) => x.status !== 'reset');
+        const bits = [];
+        if (done.length) bits.push(`reset ${done.map((x) => x.role).join(', ')}`);
+        if (skipped.length) bits.push(`skipped ${skipped.map((x) => `${x.role} (${x.reason})`).join(', ')}`);
+        toast(bits.join(' · '), skipped.length > 0);
+      }
+      setTimeout(refresh, 800);
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Reset all agents';
+    }
+  }
+
+  async function reset(pane, role) {
+    const confirmed = await askConfirm({
+      title: `Reset ${role}?`,
+      message: `This starts a new pi session for ${pane}, discards its context, and returns to pi's default model.`,
+      confirmLabel: 'Reset',
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api('/api/reset', { method: 'POST', body: JSON.stringify({ pane }), timeout: 60000 });
+      toast(`New session started for ${role}`);
+      setTimeout(refresh, 800);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  async function deleteAgent(pane, role) {
+    const confirmed = await askConfirm({
+      title: `Delete the ${role} agent?`,
+      message: `This closes pane ${pane} and ends its pi process. Repositories and branches are untouched — run .pi/multiagent/bootstrap.sh (or ask another agent) to bring the role back.`,
+      confirmLabel: 'Delete agent',
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api('/api/agent/delete', { method: 'POST', body: JSON.stringify({ pane }), timeout: 20000 });
+      toast(`Deleted the ${role} agent`);
+      setTimeout(refresh, 600);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  async function stopAgent(pane, role) {
+    try {
+      await api('/api/stop', { method: 'POST', body: JSON.stringify({ pane }) });
+      toast(`Interrupted ${role}`);
+    } catch (e) {
+      toast(e.message, true);
+    }
+    setTimeout(refresh, 500);
+  }
+
+  async function applyModel(pane, role, model) {
+    if (!model) return;
+    try {
+      const r = await api('/api/model', { method: 'POST', body: JSON.stringify({ pane, model }) });
+      toast(`${role} → ${r.model}${r.verified ? '' : ' (check footer)'}`, !r.verified);
+      setTimeout(refresh, 1000);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  function renderAttachments() {
+    const box = $('attachments');
+    box.innerHTML = '';
+    box.hidden = !pendingImages.length;
+    const frag = document.createDocumentFragment();
+    for (const img of pendingImages) {
+      const wrap = document.createElement('div');
+      wrap.className = 'att';
+      const thumb = document.createElement('img');
+      thumb.src = img.url;
+      thumb.alt = img.name;
+      thumb.title = 'Click to preview';
+      thumb.style.cursor = 'zoom-in';
+      thumb.addEventListener('click', () => {
+        $('img-full').src = img.url;
+        $('img-overlay').classList.add('show');
+      });
+      const meta = document.createElement('div');
+      meta.className = 'att-meta';
+      const name = document.createElement('span');
+      name.className = 'att-name';
+      name.textContent = img.name;
+      name.title = img.name;
+      const size = document.createElement('span');
+      size.textContent = `${Math.max(1, Math.round(img.size / 1024))} KB`;
+      meta.append(name, size);
+      const rm = document.createElement('button');
+      rm.className = 'att-rm';
+      rm.type = 'button';
+      rm.title = 'Remove image';
+      rm.setAttribute('aria-label', `Remove ${img.name}`);
+      rm.textContent = '×';
+      rm.addEventListener('click', () => {
+        URL.revokeObjectURL(img.url);
+        pendingImages = pendingImages.filter((x) => x !== img);
+        renderAttachments();
+      });
+      wrap.append(thumb, meta, rm);
+      frag.appendChild(wrap);
+    }
+    box.appendChild(frag);
+  }
+
+  function clearAttachments() {
+    for (const img of pendingImages) URL.revokeObjectURL(img.url);
+    pendingImages = [];
+    renderAttachments();
+  }
+
+  function addImage(file) {
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+      toast('Only PNG, JPEG, WebP or GIF screenshots are supported.', true);
+      return;
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      toast('Image is too large (max 6 MB).', true);
+      return;
+    }
+    if (pendingImages.length >= MAX_IMAGES) {
+      toast(`Up to ${MAX_IMAGES} screenshots per message.`, true);
+      return;
+    }
+    const total = pendingImages.reduce((n, i) => n + i.size, 0) + file.size;
+    if (total > 12 * 1024 * 1024) {
+      toast('Screenshots exceed the 12 MB total limit.', true);
+      return;
+    }
+    pendingImages.push({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      file,
+      url: URL.createObjectURL(file),
+      name: file.name || 'screenshot.png',
+      size: file.size,
+    });
+    renderAttachments();
+  }
+
+  $('message').addEventListener('paste', (ev) => {
+    const dt = ev.clipboardData;
+    if (!dt) return;
+    const files = [];
+    for (const item of dt.items || []) {
+      if (item.kind === 'file' && item.type && item.type.startsWith('image/')) {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length && dt.files) {
+      for (const f of dt.files) {
+        if (f && f.type && f.type.startsWith('image/')) files.push(f);
+      }
+    }
+    if (!files.length) return;
+    ev.preventDefault();
+    const text = dt.getData('text/plain');
+    if (text) {
+      const ta = $('message');
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? ta.value.length;
+      ta.setRangeText(text, start, end, 'end');
+    }
+    for (const f of files) addImage(f);
+  });
+
+  function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const s = String(reader.result || '');
+        const comma = s.indexOf(',');
+        resolve(comma >= 0 ? s.slice(comma + 1) : s);
+      };
+      reader.onerror = () => reject(new Error('could not read image'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function send() {
+    const pane = $('target').value;
+    const text = $('message').value.trim();
+    const hasImages = pendingImages.length > 0;
+    if (!pane || (!text && !hasImages)) return;
+    $('send').disabled = true;
+    const st = $('send-status');
+    st.className = 'status'; st.textContent = hasImages ? 'uploading…' : 'sending…';
+    try {
+      const attachments = await Promise.all(pendingImages.map(async (img) => ({
+        name: img.name,
+        type: img.file.type,
+        data: await fileToBase64(img.file),
+      })));
+      await api('/api/prompt', { method: 'POST', body: JSON.stringify({ pane, text, wait: $('wait').checked, attachments }) });
+      localStorage.removeItem(draftKey(pane));
+      rememberPrompt(text);
+      $('message').value = '';
+      draftPane = pane;
+      clearAttachments();
+      st.className = 'status ok';
+      st.textContent = `delivered to ${pane}${attachments.length ? ` · ${attachments.length} image${attachments.length > 1 ? 's' : ''}` : ''}`;
+      setTimeout(refresh, 800);
+    } catch (e) {
+      st.className = 'status err'; st.textContent = e.message;
+    } finally {
+      $('send').disabled = false;
+    }
+  }
+
+  $('login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const username = $('username').value.trim();
+    const password = $('password').value;
+    const otp = $('otp').value.trim();
+    if (!username || !password || !otp) return;
+    const btn = $('login-btn');
+    const msg = $('login-msg');
+    btn.disabled = true; btn.textContent = 'Signing in…';
+    msg.textContent = ''; msg.className = 'login-msg';
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ username, password, otp }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        msg.textContent = data.error || 'Sign-in failed.';
+        msg.className = 'login-msg err';
+        $('password').value = '';
+        $('otp').value = '';
+        $('password').focus();
+        return;
+      }
+      $('password').value = '';
+      $('otp').value = '';
+      showApp({ username: data.username, csrf: data.csrf });
+    } catch {
+      msg.textContent = 'Cannot reach the dashboard.';
+      msg.className = 'login-msg err';
+    } finally {
+      btn.disabled = false; btn.textContent = 'Sign in';
+    }
+  });
+
+  $('logout').addEventListener('click', async () => {
+    try { await api('/api/logout', { method: 'POST' }); } catch {}
+    showLogin('Signed out.');
+  });
+
+  document.addEventListener('click', (ev) => {
+    const t = ev.target.closest('[data-tail]');
+    if (t) return openTail(t.dataset.tail, t.dataset.role);
+    const p = ev.target.closest('[data-focus]');
+    if (p) { selectTarget(p.dataset.focus); $('message').scrollIntoView({ block: 'center', behavior: 'smooth' }); $('message').focus({ preventScroll: true }); }
+    const s = ev.target.closest('[data-stop]');
+    if (s) return stopAgent(s.dataset.stop, s.dataset.role);
+    const r = ev.target.closest('[data-reset]');
+    if (r) reset(r.dataset.reset, r.dataset.role);
+    const ex = ev.target.closest('[data-explore]');
+    if (ex) return window.open('/files?path=' + encodeURIComponent(ex.dataset.explore), '_blank', 'noopener');
+    const del = ev.target.closest('[data-del]');
+    if (del) return deleteAgent(del.dataset.del, del.dataset.role);
+    const m = ev.target.closest('[data-model-open]');
+    if (m) toggleModelPicker(m.dataset.modelOpen, m.dataset.role, m);
+  });
+
+  document.addEventListener('click', (ev) => {
+    if (openPicker && !ev.target.closest('.model-picker')) closeModelPicker();
+  });
+  $('wait').checked = localStorage.getItem(LS.wait) === '1';
+  $('wait').addEventListener('change', () => localStorage.setItem(LS.wait, $('wait').checked ? '1' : '0'));
+  $('target').addEventListener('change', () => {
+    localStorage.setItem(targetKey(), $('target').value);
+    switchDraft($('target').value);
+    syncLive();
+  });
+  $('message').addEventListener('input', () => {
+    histIndex = -1; // typing leaves history navigation
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraftFor(draftPane), 250);
+  });
+
+  $('refresh').onclick = refresh;
+
+  const sidebarEl = $('sidebar');
+  // remember=false applies the state without saving it (used for the screen-width default)
+  function setSidebarCollapsed(collapsed, remember = true) {
+    sidebarEl.classList.toggle('collapsed', collapsed);
+    const btn = $('sidebar-toggle');
+    btn.textContent = collapsed ? '›' : '‹';
+    btn.title = collapsed ? 'Expand agents sidebar' : 'Collapse agents sidebar';
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    if (remember) localStorage.setItem(LS.sidebar, collapsed ? '1' : '0');
+  }
+  // Default: collapsed on narrow screens, expanded on wide ones, until the user toggles it.
+  const narrowScreen = window.matchMedia('(max-width: 980px)');
+  const savedSidebar = localStorage.getItem(LS.sidebar);
+  setSidebarCollapsed(savedSidebar === null ? narrowScreen.matches : savedSidebar === '1', false);
+  narrowScreen.addEventListener('change', (e) => {
+    if (localStorage.getItem(LS.sidebar) === null) setSidebarCollapsed(e.matches, false);
+  });
+  $('sidebar-toggle').onclick = () => setSidebarCollapsed(!sidebarEl.classList.contains('collapsed'));
+  $('reset-all').onclick = resetAll;
+  $('clear-tasks').onclick = clearTasks;
+  $('tasks').addEventListener('click', (e) => {
+    const el = e.target.closest('.task[data-task]');
+    if (el) openTask(Number(el.dataset.task));
+  });
+  $('task-close').onclick = closeTask;
+  $('task-overlay').addEventListener('click', (e) => { if (e.target === $('task-overlay')) closeTask(); });
+  document.addEventListener('keydown', (e) => {
+    if (!taskOpen) return;
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeTask(); }
+  }, true);
+  $('send').onclick = send;
+  $('tail-close').onclick = closeStream;
+  $('overlay').addEventListener('click', (e) => { if (e.target === $('overlay')) closeStream(); });
+  $('img-overlay').addEventListener('click', () => $('img-overlay').classList.remove('show'));
+  $('message').addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') send(); });
+
+  // ---------- prompt history: ArrowUp/ArrowDown recall sent prompts, like the CLI ----------
+  // Per Linux user, newest last. ArrowUp only acts when the caret is on the first line, so
+  // multi-line editing keeps its normal caret movement. The draft being typed is kept and
+  // restored when ArrowDown walks past the newest entry.
+  const HISTORY_MAX = 100;
+  const historyKey = () => `mah.promptHistory.${me ? me.username : 'anon'}`;
+  function promptHistory() {
+    try {
+      const list = JSON.parse(localStorage.getItem(historyKey()) || '[]');
+      return Array.isArray(list) ? list.filter((x) => typeof x === 'string' && x) : [];
+    } catch { return []; }
+  }
+  let histIndex = -1; // index into promptHistory(); -1 = the live draft
+  let histDraft = '';
+  function rememberPrompt(text) {
+    if (!text) return;
+    const list = promptHistory();
+    if (list[list.length - 1] !== text) list.push(text);
+    localStorage.setItem(historyKey(), JSON.stringify(list.slice(-HISTORY_MAX)));
+    histIndex = -1;
+  }
+  function recallPrompt(step) {
+    const list = promptHistory();
+    if (!list.length) return false;
+    let next;
+    if (step < 0) {
+      if (histIndex === -1) { histDraft = $('message').value; next = list.length - 1; }
+      else next = Math.max(0, histIndex - 1);
+    } else {
+      if (histIndex === -1) return false;
+      next = histIndex + 1;
+    }
+    if (next >= list.length) { // past the newest entry: back to the draft
+      histIndex = -1;
+      $('message').value = histDraft;
+    } else {
+      histIndex = next;
+      $('message').value = list[next];
+    }
+    const end = $('message').value.length;
+    $('message').setSelectionRange(end, end);
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraftFor(draftPane), 250);
+    return true;
+  }
+  // Escape empties the composer (the slash menu handles its own Escape first). The cleared
+  // draft is removed from storage straight away so it does not come back on reload.
+  function clearComposer() {
+    $('message').value = '';
+    histIndex = -1;
+    clearTimeout(draftTimer);
+    saveDraftFor(draftPane);
+  }
+  $('message').addEventListener('keydown', (e) => {
+    if (!cmdMenu.hidden) return; // slash menu owns Escape and arrows
+    if (e.key === 'Escape' && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      if (!$('message').value) return;
+      e.preventDefault();
+      clearComposer();
+      return;
+    }
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const v = $('message').value;
+    const pos = $('message').selectionStart;
+    if (e.key === 'ArrowUp' && !v.slice(0, pos).includes('\n') && recallPrompt(-1)) e.preventDefault();
+    else if (e.key === 'ArrowDown' && !v.slice($('message').selectionEnd).includes('\n') && recallPrompt(1)) e.preventDefault();
+  });
+
+  // ---------- slash-command autocomplete: pi's commands, prompt templates and skills ----------
+  // Typing "/" at the start of the message opens the same list pi shows in its terminal.
+  const msgBox = $('message');
+  const cmdMenu = $('cmd-menu');
+  const CMD_SRC = { builtin: 'built-in', extension: 'extension', prompt: 'prompt', skill: 'skill' };
+  const CMD_TTL_MS = 60 * 1000;
+  const cmdCache = new Map(); // pane id -> { at, commands, builtin, error }
+  const cmdLoading = new Set();
+  let cmdItems = [];
+  let cmdIndex = 0;
+
+  function hideCmdMenu() {
+    cmdMenu.hidden = true;
+    cmdMenu.innerHTML = '';
+    cmdItems = [];
+  }
+
+  // Extension commands win over built-ins with the same name.
+  function allCommands(entry) {
+    const seen = new Set();
+    const out = [];
+    for (const c of [...(entry.commands || []), ...(entry.builtin || [])]) {
+      if (seen.has(c.name)) continue;
+      seen.add(c.name);
+      out.push(c);
+    }
+    return out;
+  }
+
+  function filterCommands(items, query) {
+    const q = query.toLowerCase();
+    const prefix = [];
+    const loose = [];
+    for (const c of items) {
+      const name = c.name.toLowerCase();
+      if (name.startsWith(q)) prefix.push(c);
+      else if (name.includes(q)) loose.push(c);
+    }
+    return [...prefix, ...loose].slice(0, 60);
+  }
+
+  function renderCmdMenu(items, note) {
+    cmdItems = items;
+    cmdIndex = 0;
+    cmdMenu.innerHTML = items.map((c, i) => `<div class="cmd-item${i === 0 ? ' active' : ''}" role="option" data-i="${i}">
+        <span class="cmd-name">/${esc(c.name)}${c.args ? ` <span class="cmd-args">${esc(c.args)}</span>` : ''}</span>
+        <span class="cmd-src">${esc(CMD_SRC[c.source] || c.source)}</span>
+        ${c.description ? `<span class="cmd-desc">${esc(c.description)}</span>` : ''}
+      </div>`).join('')
+      + (note ? `<div class="cmd-status">${esc(note)}</div>` : '');
+    cmdMenu.hidden = false;
+  }
+
+  function refreshCmdMenu() {
+    const pane = $('target').value;
+    const m = /^\/(\S*)$/.exec(msgBox.value.slice(0, msgBox.selectionStart));
+    if (!m || !pane) return hideCmdMenu();
+    const entry = cmdCache.get(pane);
+    if (!entry) { renderCmdMenu([], 'loading commands…'); loadCommands(pane); return; }
+    if (Date.now() - entry.at >= CMD_TTL_MS) loadCommands(pane); // refreshed in the background
+    const items = filterCommands(allCommands(entry), m[1]);
+    const note = entry.error ? `extensions and skills unavailable: ${entry.error}` : '';
+    if (!items.length && !note) return hideCmdMenu();
+    renderCmdMenu(items, note);
+  }
+
+  async function loadCommands(pane) {
+    const entry = cmdCache.get(pane);
+    if (cmdLoading.has(pane) || (entry && Date.now() - entry.at < CMD_TTL_MS)) return;
+    cmdLoading.add(pane);
+    try {
+      const r = await api('/api/commands?pane=' + encodeURIComponent(pane));
+      cmdCache.set(pane, { at: Date.now(), commands: r.commands || [], builtin: r.builtin || [], error: r.error || null });
+    } catch (e) {
+      cmdCache.set(pane, { at: Date.now(), commands: [], builtin: entry ? entry.builtin : [], error: e.message });
+    } finally {
+      cmdLoading.delete(pane);
+    }
+    refreshCmdMenu();
+  }
+
+  function moveCmd(d) {
+    if (!cmdItems.length) return;
+    const rows = cmdMenu.querySelectorAll('.cmd-item');
+    cmdIndex = (cmdIndex + d + cmdItems.length) % cmdItems.length;
+    rows.forEach((el, i) => el.classList.toggle('active', i === cmdIndex));
+    rows[cmdIndex].scrollIntoView({ block: 'nearest' });
+  }
+
+  // Replaces the command word and keeps any arguments already typed after it.
+  function acceptCmd(c) {
+    if (!c) return;
+    const val = msgBox.value;
+    const ws = val.search(/\s/);
+    const head = `/${c.name} `;
+    msgBox.value = head + (ws < 0 ? '' : val.slice(ws + 1));
+    msgBox.setSelectionRange(head.length, head.length);
+    hideCmdMenu();
+    msgBox.focus();
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => saveDraftFor(draftPane), 250);
+  }
+
+  msgBox.addEventListener('keydown', (e) => {
+    if (cmdMenu.hidden) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveCmd(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveCmd(-1); }
+    else if (e.key === 'Escape') { e.preventDefault(); hideCmdMenu(); }
+    else if ((e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) || e.key === 'Tab') {
+      const item = cmdItems[cmdIndex];
+      if (!item) return;
+      // The word is already exactly this command: Enter just starts a new line.
+      if (e.key === 'Enter' && msgBox.value.slice(1, msgBox.value.search(/\s|$/)) === item.name) return hideCmdMenu();
+      e.preventDefault();
+      acceptCmd(item);
+    }
+  });
+  msgBox.addEventListener('input', refreshCmdMenu);
+  msgBox.addEventListener('click', refreshCmdMenu);
+  msgBox.addEventListener('keyup', (e) => {
+    if (['ArrowUp', 'ArrowDown', 'Enter', 'Tab', 'Escape'].includes(e.key)) return;
+    refreshCmdMenu();
+  });
+  msgBox.addEventListener('blur', () => setTimeout(hideCmdMenu, 120));
+  cmdMenu.addEventListener('mousedown', (e) => {
+    const row = e.target.closest('.cmd-item');
+    if (!row) return;
+    e.preventDefault(); // keep focus in the textarea
+    acceptCmd(cmdItems[Number(row.dataset.i)]);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (confirmOpen || taskOpen) return; // a dialog owns Escape while it is open
+    if (e.key === 'Escape') {
+      $('img-overlay').classList.remove('show');
+      closeStream();
+    }
+  });
+
+  // initial session probe
+  fetch('/api/me', { credentials: 'same-origin' })
+    .then((r) => r.json())
+    .then((account) => { if (account.authenticated) showApp(account); else showLogin(); })
+    .catch(() => showLogin('Cannot reach the dashboard.'));
+})();
+</script>
+</body>
+</html>

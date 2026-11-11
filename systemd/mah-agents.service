@@ -1,0 +1,31 @@
+[Unit]
+Description=role panes + pi agents (bootstrap.sh --start-agents)
+Documentation=file://@HARNESS@/SETUP.md
+# needs a running herdr server; restart together with it (crash, upgrade)
+After=mah-herdr.service
+Requires=mah-herdr.service
+PartOf=mah-herdr.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=@WORKSPACE@
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=WORKSPACE_ROOT=@WORKSPACE@
+Environment=BACKEND_DIR=@BACKEND@
+Environment=FRONTEND_DIR=@FRONTEND@
+Environment=MAH_STATE_DIR=@HARNESS@
+Environment=MAH_REQUIRE_SERVER=1
+Environment=MAH_STACK=1
+# herdr reports "running" only once its socket is up; bootstrap must not race it
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do herdr status 2>/dev/null | grep -A1 "^server:" | grep -q "status: running" && exit 0; sleep 0.5; done; echo "herdr server did not come up" >&2; exit 1'
+# idempotent: reuses panes by cwd, restarts only agents that are gone,
+# refreshes memory.json, seeds tasks.md
+ExecStart=@HARNESS@/bootstrap.sh --start-agents
+TimeoutStartSec=300
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

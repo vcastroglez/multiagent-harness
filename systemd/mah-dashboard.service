@@ -1,0 +1,28 @@
+[Unit]
+Description=multi-agent dashboard (PAM login, 127.0.0.1:7788)
+Documentation=file://@HARNESS@/SETUP.md
+StartLimitIntervalSec=0
+# the console is useless without panes; order after the stack, but keep
+# starting even if agent startup failed (the UI then shows the last state)
+Wants=mah-herdr.service mah-agents.service
+After=mah-herdr.service mah-agents.service
+
+[Service]
+Type=simple
+WorkingDirectory=@HARNESS@/web
+Environment=PORT=7788
+Environment=HOST=127.0.0.1
+Environment=DASHBOARD_PYTHON=/usr/bin/python3
+Environment=HERDR_BIN=%h/.local/bin/herdr
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=WORKSPACE_ROOT=@WORKSPACE@
+Environment=BACKEND_DIR=@BACKEND@
+Environment=FRONTEND_DIR=@FRONTEND@
+Environment=MAH_STATE_DIR=@HARNESS@
+ExecStart=/usr/bin/env node @HARNESS@/web/server.js
+Restart=always
+RestartSec=2
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
