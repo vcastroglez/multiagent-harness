@@ -9,3 +9,20 @@ tasks-archive/
 sessions.json
 *.log
 node_modules/
+
+# secrets and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.ovpn
+*.token
+id_rsa
+id_ed25519
+id_ecdsa
+*.dump
+*.sql.gz
+*.sql.bz2

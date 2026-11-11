@@ -132,6 +132,7 @@ dispatch.sh           role -> pane resolver; prompt via msg or herdr
 coordinator.md        coordination-only system prompt
 reviewer.md           read-only audit prompt
 tasks.md              shared queue (rendered by the dashboard)
+THIRD_PARTY_NOTICES.md  third-party licenses and attributions
 web/                  zero-dependency dashboard (Node + static pages)
 systemd/              user unit templates + installer
 pi-extensions/        optional queue-guard pi extension and its test
@@ -140,3 +141,34 @@ pi-extensions/        optional queue-guard pi extension and its test
 Runtime files (`memory.json`, `sessions.json`, `auth-state.json`,
 `herdr-server.log`, `web/dashboard.log`, `uploads/`, `tasks-archive/`, build
 caches) are git-ignored.
+
+## Secrets
+
+Tracked files must never contain credentials. The repository deliberately
+excludes `.env` files, API keys, tokens, TOTP secrets, `auth-state.json`,
+`sessions.json`, `memory.json`, database dumps, SSH keys and VPN profiles; see
+`.gitignore`. The dashboard writes runtime state to `MAH_STATE_DIR` (default:
+the harness root) and those files are ignored.
+
+`tasks.md` **is** tracked: keep deployment details and credentials out of it.
+If a secret is ever committed, rotate it first, then rewrite history — deleting
+it in a later commit does not remove it from Git.
+
+## Licenses and third-party notices
+
+This repository does not vendor or bundle herdr, pi, or their code. It invokes
+them as separate programs, so their licenses govern your use of those tools:
+
+- **herdr** — Apache License 2.0. Copyright the herdr contributors.
+  <https://github.com/herdrdev/herdr> · [LICENSE](https://github.com/herdrdev/herdr/blob/master/LICENSE)
+- **pi** — MIT License. Copyright (c) 2025 Mario Zechner.
+  <https://github.com/earendil-works/pi> · [LICENSE](https://github.com/earendil-works/pi/blob/main/LICENSE)
+- **Node.js** — its own license; see <https://nodejs.org/en/about/previous-releases>.
+
+If you redistribute herdr or pi, include their license and notice files and
+mark modified files. Apache-2.0 does not grant trademark rights in the Herdr
+name or logo. See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the
+notices and the full MIT text.
+
+The harness code in this repository is private and **no license is granted for
+it at this time**. Add a `LICENSE` file before distributing the harness itself.
