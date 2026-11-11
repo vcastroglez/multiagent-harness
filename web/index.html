@@ -152,6 +152,15 @@
   .live-stream { flex:none; height:300px; min-height:120px; max-height:85vh; resize:vertical; border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
   .ev-t.clamped { max-height:9.5em; overflow:hidden; }
   .ev-t.clamped.one-line { max-height:1.45em; white-space:pre; word-break:normal; text-overflow:ellipsis; }
+  /* Tool calls/results and thinking collapse to one row: label · time · preview [show more]. */
+  .ev-compact { display:flex; align-items:center; gap:8px; min-width:0; margin-bottom:6px; }
+  .ev-compact .ev-h { flex:none; margin:0; white-space:nowrap; }
+  .ev-compact .ev-t { flex:1 1 auto; min-width:0; margin:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .ev-compact .ev-more { flex:none; margin:0; }
+  .ev-compact.expanded { display:block; }
+  .ev-compact.expanded .ev-h { margin-bottom:3px; }
+  .ev-compact.expanded .ev-t { white-space:pre-wrap; overflow:visible; text-overflow:clip; }
+  .ev-compact.expanded .ev-more { margin-top:4px; }
   .ev[data-role="user"] { border-left:3px solid var(--accent); background:rgba(88,166,255,.10); border-radius:0 8px 8px 0; padding:8px 12px; margin-bottom:14px; }
   .ev[data-role="user"] .ev-h { color:#79b8ff; font-weight:650; }
   .ev-more { margin-top:4px; font-size:11px; padding:2px 8px; }
@@ -180,6 +189,34 @@
   .ev { margin:0 0 12px; border-left:2px solid var(--border); padding-left:10px; }
   .ev-h { font:11px var(--mono); color:var(--muted); margin-bottom:3px; user-select:none; }
   .ev-t { margin:0; white-space:pre-wrap; word-break:break-word; font:12px/1.45 var(--mono); color:#c9d1d9; }
+  /* Markdown-rendered assistant/user messages: prose, but compact enough for a feed. */
+  .ev-md { white-space:normal; font:13px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .ev-md > :first-child { margin-top:0; }
+  .ev-md > :last-child { margin-bottom:0; }
+  .ev-md p { margin:0 0 8px; }
+  .ev-md h1, .ev-md h2, .ev-md h3, .ev-md h4, .ev-md h5, .ev-md h6 { margin:14px 0 6px; line-height:1.3; font-weight:650; }
+  .ev-md h1 { font-size:18px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+  .ev-md h2 { font-size:16px; }
+  .ev-md h3 { font-size:14.5px; }
+  .ev-md h4, .ev-md h5, .ev-md h6 { font-size:13px; color:var(--muted); }
+  .ev-md ul, .ev-md ol { margin:0 0 8px; padding-left:24px; }
+  .ev-md li { margin:2px 0; }
+  .ev-md li > p { margin:0 0 4px; }
+  .ev-md li > p:last-child { margin-bottom:0; }
+  .ev-md li > ul, .ev-md li > ol { margin:4px 0; }
+  .ev-md li.task-item { list-style:none; margin-left:-20px; }
+  .ev-md code { font:12px/1.4 var(--mono); background:#0b0f14; border:1px solid var(--border); border-radius:4px; padding:1px 4px; }
+  .ev-md pre { margin:0 0 8px; padding:8px 10px; background:#0b0f14; border:1px solid var(--border); border-radius:7px; overflow-x:auto; }
+  .ev-md pre code { padding:0; border:0; background:none; font-size:12px; line-height:1.45; }
+  .ev-md blockquote { margin:0 0 8px; padding:2px 0 2px 10px; border-left:3px solid var(--border); color:var(--muted); }
+  .ev-md a { color:var(--accent); text-decoration:none; }
+  .ev-md a:hover { text-decoration:underline; }
+  .ev-md hr { margin:12px 0; border:0; border-top:1px solid var(--border); }
+  .ev-md img { max-width:100%; border-radius:6px; }
+  .ev-md table { display:block; max-width:100%; overflow-x:auto; margin:0 0 8px; border-collapse:collapse; font-size:12px; }
+  .ev-md th, .ev-md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
+  .ev-md th { background:var(--panel2); font-weight:650; }
+  .ev-md input[type="checkbox"] { margin:0 6px 0 0; vertical-align:middle; accent-color:var(--accent); }
   .ev-user { border-left-color:#58a6ff; }
   .ev-user .ev-h { color:#79b8ff; }
   .ev-assistant { border-left-color:#3fb950; }
@@ -368,6 +405,268 @@
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const hhmmss = (ts) => { try { return new Date(ts).toLocaleTimeString([], { hour12:false }); } catch { return ''; } };
+
+  // ---------- markdown ----------
+  // Dependency-free Markdown for the live feed. Every piece of agent text is
+  // escaped before tags are added; links are limited to http(s)/mailto/anchors,
+  // so model output can never inject HTML or javascript: URLs into the console.
+
+  function mdUrl(raw) {
+    const u = String(raw).trim();
+    return /^(https?:\/\/|mailto:|#)/i.test(u) ? u : null;
+  }
+
+  function mdEmphasis(s) {
+    s = s.replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>');
+    s = s.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^\w])__(?=\S)([\s\S]*?\S)__(?!\w)/g, '$1<strong>$2</strong>');
+    s = s.replace(/~~(?=\S)([\s\S]*?\S)~~/g, '<del>$1</del>');
+    s = s.replace(/\*(?=\S)([\s\S]*?\S)\*/g, '<em>$1</em>');
+    s = s.replace(/(^|[\s([{])_(?=\S)([\s\S]*?\S)_(?![\w])/g, '$1<em>$2</em>');
+    return s;
+  }
+
+  function mdInline(src) {
+    const stash = [];
+    const hold = (html) => `\u0000${stash.push(html) - 1}\u0001`;
+    let s = String(src).replace(/\u0000/g, '\uFFFD');
+    // Inline code first: its contents are literal, including backslashes. A
+    // backslash-escaped backtick outside code is not a code-span delimiter.
+    let scan = '';
+    for (let i = 0; i < s.length;) {
+      if (s[i] === '\\') { scan += s.slice(i, i + 2); i += 2; continue; }
+      if (s[i] !== '`') { scan += s[i++]; continue; }
+      let run = 1;
+      while (s[i + run] === '`') run++;
+      let close = -1;
+      for (let j = i + run; j < s.length;) {
+        if (s[j] !== '`') { j++; continue; }
+        let r = 1;
+        while (s[j + r] === '`') r++;
+        if (r === run) { close = j; break; }
+        j += r;
+      }
+      if (close < 0) { scan += s.slice(i, i + run); i += run; continue; }
+      let body = s.slice(i + run, close).replace(/\n/g, ' ');
+      if (/^ .* $/.test(body) && !/^  /.test(body)) body = body.slice(1, -1);
+      scan += hold(`<code>${esc(body)}</code>`);
+      i = close + run;
+    }
+    s = scan;
+    // hard breaks before escaping, so their spaces are not swallowed later
+    s = s.replace(/\\\n/g, () => hold('<br>'));
+    s = s.replace(/ {2,}\n/g, () => hold('<br>\n'));
+    // backslash escapes are literal characters, never formatting
+    s = s.replace(/\\([\\`*_{}\[\]()#+\-.!>~|])/g, (m, ch) => hold(esc(ch)));
+    s = esc(s);
+    // autolinks <https://…> (escaped to &lt;…&gt; above)
+    s = s.replace(/&lt;(https?:\/\/[^\s]*?)&gt;/g, (m, url) =>
+      hold(`<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`));
+    // images before links (the link pattern would otherwise match the [..] part)
+    s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, label, url) => {
+      const href = mdUrl(url);
+      if (!href) return m;
+      const alt = label.replace(/\u0000\d+\u0001/g, '');
+      return hold(`<img src="${href}" alt="${alt}" loading="lazy" referrerpolicy="no-referrer">`);
+    });
+    s = s.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^&]*&quot;)?\)/g, (m, label, url) => {
+      const href = mdUrl(url);
+      return href ? hold(`<a href="${href}" target="_blank" rel="noopener noreferrer">${mdEmphasis(label)}</a>`) : m;
+    });
+    s = mdEmphasis(s);
+    // Restore placeholders in passes: a link label can itself contain a code span.
+    for (let pass = 0; pass < 4 && s.includes('\u0000'); pass++) {
+      s = s.replace(/\u0000(\d+)\u0001/g, (m, idx) => stash[Number(idx)] || '');
+    }
+    return s.replace(/\u0000\d+\u0001/g, '');
+  }
+
+  function mdBlockStart(line) {
+    return /^ {0,3}(#{1,6}[ \t]|>|(`{3,}|~{3,})|([-+*]|\d{1,9}[.)])[ \t]|((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$)/.test(line);
+  }
+
+  function mdTable(lines, start) {
+    const header = lines[start];
+    const sep = lines[start + 1];
+    if (!header || !sep || !header.includes('|') || !sep.includes('|')) return null;
+    if (!/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(sep)) return null;
+    const cells = (line) => line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+    const head = cells(header);
+    const aligns = cells(sep).map((c) => {
+      const left = c.startsWith(':');
+      const right = c.endsWith(':');
+      return left && right ? 'center' : right ? 'right' : left ? 'left' : '';
+    });
+    const alignAttr = (i) => (aligns[i] ? ` style="text-align:${aligns[i]}"` : '');
+    let i = start + 2;
+    const rows = [];
+    while (i < lines.length && lines[i].trim() && lines[i].includes('|') && !mdBlockStart(lines[i])) {
+      const row = cells(lines[i]);
+      rows.push(`<tr>${head.map((_, idx) => `<td${alignAttr(idx)}>${mdInline(row[idx] || '')}</td>`).join('')}</tr>`);
+      i++;
+    }
+    const html = `<table><thead><tr>${head.map((c, idx) => `<th${alignAttr(idx)}>${mdInline(c)}</th>`).join('')}</tr></thead>`
+      + (rows.length ? `<tbody>${rows.join('')}</tbody>` : '') + '</table>';
+    return { html, next: i };
+  }
+
+  function mdList(lines, start) {
+    const first = /^(\s{0,3})([-+*]|\d{1,9}[.)])([ \t]+)(.*)$/.exec(lines[start]);
+    if (!first) return null;
+    const base = first[1].length;
+    const ordered = /^\d/.test(first[2]);
+    const startNum = ordered ? parseInt(first[2], 10) : 1;
+    const sameType = (marker) => /^\d/.test(marker) === ordered;
+    const markerAt = (line) => {
+      const m = /^(\s*)([-+*]|\d{1,9}[.)])([ \t]+)(.*)$/.exec(line);
+      return m ? { indent: m[1].length, marker: m[2], space: m[3].length, text: m[4] } : null;
+    };
+    const items = [];
+    let cur = null;
+    let curIndent = 0;
+    let i = start;
+    while (i < lines.length) {
+      const line = lines[i];
+      if (!line.trim()) {
+        // Keep blank lines only when the list continues after them.
+        let j = i + 1;
+        while (j < lines.length && !lines[j].trim()) j++;
+        if (j < lines.length) {
+          const nm = markerAt(lines[j]);
+          const nextIndent = lines[j].match(/^\s*/)[0].length;
+          if ((nm && nm.indent === base && sameType(nm.marker)) || nextIndent > base) {
+            if (cur) cur.push('');
+            i++;
+            continue;
+          }
+        }
+        break;
+      }
+      const m = markerAt(line);
+      if (m && m.indent === base && sameType(m.marker)) {
+        cur = [m.text];
+        curIndent = m.indent + m.marker.length + m.space;
+        items.push(cur);
+        i++;
+        continue;
+      }
+      const indent = line.match(/^\s*/)[0].length;
+      if (indent > base && cur) {
+        // Nested block / continuation: remove the item's content indentation.
+        cur.push(line.slice(Math.min(indent, curIndent)));
+        i++;
+        continue;
+      }
+      // Markdown allows the item paragraph to continue without indentation.
+      if (cur && !mdBlockStart(line)) { cur.push(line); i++; continue; }
+      break;
+    }
+    const tag = ordered ? 'ol' : 'ul';
+    const attr = ordered && startNum !== 1 ? ` start="${startNum}"` : '';
+    const body = items.map((itemLines) => {
+      let text = itemLines.join('\n');
+      let checkbox = '';
+      const task = /^\[([ xX])\][ \t]+/.exec(text);
+      if (task) {
+        checkbox = `<input type="checkbox" disabled${task[1].toLowerCase() === 'x' ? ' checked' : ''}> `;
+        text = text.slice(task[0].length);
+      }
+      let inner = mdBlocks(text);
+      if (checkbox) inner = inner.startsWith('<p>') ? inner.replace(/^<p>/, `<p>${checkbox}`) : checkbox + inner;
+      return `<li${task ? ' class="task-item"' : ''}>${inner}</li>`;
+    }).join('');
+    return { html: `<${tag}${attr}>${body}</${tag}>`, next: i };
+  }
+
+  function mdBlocks(src) {
+    const lines = String(src).replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    let para = [];
+    let i = 0;
+    const flush = () => {
+      if (!para.length) return;
+      out.push(`<p>${mdInline(para.join('\n'))}</p>`);
+      para = [];
+    };
+    while (i < lines.length) {
+      const line = lines[i];
+      let m;
+      if (!line.trim()) { flush(); i++; continue; }
+      // fenced code block
+      if ((m = /^\s{0,3}(`{3,}|~{3,})([^\n]*)$/.exec(line))) {
+        flush();
+        const fence = m[1];
+        const info = m[2].trim();
+        const buf = [];
+        i++;
+        while (i < lines.length) {
+          const close = /^\s{0,3}(`{3,}|~{3,})\s*$/.exec(lines[i]);
+          if (close && close[1][0] === fence[0] && close[1].length >= fence.length) { i++; break; }
+          buf.push(lines[i++]);
+        }
+        const lang = info.split(/\s+/)[0].replace(/[^\w+#.-]/g, '');
+        out.push(`<pre><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(buf.join('\n'))}</code></pre>`);
+        continue;
+      }
+      // setext heading (a single-line paragraph underlined with = or -)
+      if (para.length === 1 && /^ {0,3}=+[ \t]*$/.test(line)) {
+        const text = para[0]; para = [];
+        out.push(`<h1>${mdInline(text)}</h1>`); i++; continue;
+      }
+      if (para.length === 1 && /^ {0,3}-+[ \t]*$/.test(line)) {
+        const text = para[0]; para = [];
+        out.push(`<h2>${mdInline(text)}</h2>`); i++; continue;
+      }
+      // ATX heading
+      if ((m = /^ {0,3}(#{1,6})[ \t]+(.*?)(?:[ \t]+#+[ \t]*)?$/.exec(line))) {
+        flush();
+        const level = m[1].length;
+        out.push(`<h${level}>${mdInline(m[2])}</h${level}>`);
+        i++;
+        continue;
+      }
+      // horizontal rule
+      if (/^ {0,3}((\*[ \t]*){3,}|(-[ \t]*){3,}|(_[ \t]*){3,})$/.test(line)) {
+        flush(); out.push('<hr>'); i++; continue;
+      }
+      // blockquote
+      if (/^ {0,3}>/.test(line)) {
+        flush();
+        const buf = [];
+        while (i < lines.length && /^ {0,3}>/.test(lines[i])) {
+          buf.push(lines[i].replace(/^ {0,3}>[ \t]?/, ''));
+          i++;
+        }
+        out.push(`<blockquote>${mdBlocks(buf.join('\n'))}</blockquote>`);
+        continue;
+      }
+      // table
+      const tbl = mdTable(lines, i);
+      if (tbl) { flush(); out.push(tbl.html); i = tbl.next; continue; }
+      // list
+      const list = mdList(lines, i);
+      if (list) { flush(); out.push(list.html); i = list.next; continue; }
+      // indented code block
+      if (/^( {4}|\t)/.test(line)) {
+        flush();
+        const buf = [];
+        while (i < lines.length && (/^( {4}|\t)/.test(lines[i]) || !lines[i].trim())) {
+          buf.push(lines[i].replace(/^( {4}|\t)/, ''));
+          i++;
+        }
+        while (buf.length && !buf[buf.length - 1].trim()) buf.pop();
+        out.push(`<pre><code>${esc(buf.join('\n'))}</code></pre>`);
+        continue;
+      }
+      // paragraph
+      para.push(line);
+      i++;
+    }
+    flush();
+    return out.join('\n');
+  }
+
+  const mdToHtml = (src) => mdBlocks(String(src)) || '<p></p>';
 
   async function api(path, opts = {}) {
     const headers = { 'content-type': 'application/json', ...(opts.headers || {}) };
@@ -865,18 +1164,36 @@
     const label = ev.kind === 'result' ? 'tool result' : ev.kind === 'tool' ? 'tool call'
       : ev.kind === 'thinking' ? `${ev.role || 'assistant'} (thinking)` : (ev.role || ev.kind || 'log');
     head.textContent = `${label} · ${hhmmss(ev.ts)}`;
-    const body = document.createElement('pre');
-    body.className = 'ev-t';
-    body.textContent = String(ev.text || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
+    // User and assistant messages are Markdown; tool output, thinking and system
+    // lines stay literal so their whitespace is preserved.
+    const text = String(ev.text || '').replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').replace(/\r/g, '');
+    const markdown = ev.kind === 'text';
+    const body = document.createElement(markdown ? 'div' : 'pre');
+    body.className = markdown ? 'ev-t ev-md' : 'ev-t';
+    if (markdown) body.innerHTML = mdToHtml(text);
+    else body.textContent = text;
     wrap.append(head, body);
-    // Tool calls, tool results and thinking are always folded to one line. Messages
-    // (user and assistant) are shown in full. Anything else folds when long.
+    // Tool calls, tool results and thinking are always a single row in the feed:
+    // label · time · truncated preview [show more]. Messages are shown in full;
+    // anything else folds when long.
+    const compact = ev.kind === 'tool' || ev.kind === 'result' || ev.kind === 'thinking';
+    if (compact) {
+      wrap.classList.add('ev-compact');
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'mini ev-more';
+      more.textContent = 'show more';
+      more.onclick = () => {
+        const expanded = wrap.classList.toggle('expanded');
+        more.textContent = expanded ? 'show less' : 'show more';
+      };
+      wrap.append(more);
+      return wrap;
+    }
     const isMessage = ev.kind === 'text' || ev.kind === 'user' || ev.kind === 'assistant';
-    const oneLine = ev.kind === 'tool' || ev.kind === 'result' || ev.kind === 'thinking';
     const long = body.textContent.split('\n').length > 8 || body.textContent.length > 700;
-    if (oneLine || (!isMessage && long)) {
+    if (!isMessage && long) {
       body.classList.add('clamped');
-      if (oneLine) body.classList.add('one-line');
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'mini ev-more';
@@ -884,7 +1201,6 @@
       more.onclick = () => {
         const expanding = body.classList.contains('clamped');
         body.classList.toggle('clamped', !expanding);
-        body.classList.toggle('one-line', !expanding && oneLine);
         more.textContent = expanding ? 'show less' : 'show more';
       };
       wrap.append(more);
