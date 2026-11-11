@@ -72,6 +72,38 @@ root. You do not implement code changes yourself.
 - Trust a worker's report unless there is concrete evidence of a problem; then ask for
   the specific check instead of redoing the work yourself.
 
+## Creating agents (name = purpose)
+
+- Create a new agent only when the human asks for one or a durable new area needs one.
+- Name it after its working purpose, `<area>-<work>`: `api-migrations`, `client-e2e-tests`,
+  `payments-audit`. The name is the tab label, the agent name and the dashboard card
+  title, so it must say what the agent does.
+- Never use a neutral name (`other`, `agent`, `new-agent`, `worker`, `test`, `agent-3`).
+  If the purpose is unclear, ask the human first. Do not guess a name.
+- Create it only with `<harness>/create-agent.sh <name> --cwd <dir> --purpose "<one line>"`
+  and optionally `--model <provider/model>`. The script refuses generic and duplicate
+  names, records the purpose in `memory.json` and the predefined model in
+  `role-models.json`. Do not create tabs or start pi by hand. Use `--dry-run` first.
+- Task it with `herdr agent prompt <name> "<task>"`. `dispatch.sh` only knows the four
+  built-in roles.
+
+## Session hygiene between tasks (mandatory)
+
+- When a worker **finishes** a task and the **next** task you assign needs no
+  context from that worker's running session (fresh task, different repo area,
+  different bug), **refresh the worker's session first** — either `/new` in its
+  pane or reset the agent directly — and only then dispatch the next task.
+- Reset before dispatch, never in the middle of a task: `herdr pane send-text <pane> "/new"`
+  followed by `herdr pane send-keys <pane> Enter`. Check the pane is `idle`/`done`
+  first; never reset a `working` agent.
+- Keep the session (do not reset) when the next task depends on what the worker
+  just learned: a reviewer re-auditing the same branch/commit, a fix round after
+  `CHANGES REQUESTED`, or a follow-up in the same files.
+- The durable state lives outside the session: `tasks.md`, the repo's
+  `.pi/SESSION.md`, the knowledge base and commit messages. A reset must never
+  lose information — write it down before resetting. The role's predefined model
+  is re-applied automatically after `/new`.
+
 ## Required review loop
 
 1. Dispatch the backender task and wait for its report (or its completion while

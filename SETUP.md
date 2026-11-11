@@ -177,6 +177,11 @@ Command-line equivalents:
 ./dispatch.sh frontender  "Wire the new endpoint; verify on web; report commit."
 ./dispatch.sh coordinator "Status?" --wait
 herdr agent read <pane> --source visible --lines 40
+
+# extra purpose-named agent; the optional model is stored in role-models.json
+./create-agent.sh api-migrations \
+  --cwd "$PWD/backend" --purpose "Write and verify DB migrations for the backend" \
+  --model openrouter/deepseek/deepseek-v4.1-flash-1017
 ```
 
 ## Task queue (`tasks.md`)

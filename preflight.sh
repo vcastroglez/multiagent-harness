@@ -147,6 +147,7 @@ done
 [ -f "$STATE/web/server.js" ] && pass "web:server" "$STATE/web/server.js" || fail "web:server" "missing"
 [ -f "$STATE/web/pam_auth.py" ] && pass "web:pam_auth" "$STATE/web/pam_auth.py" || fail "web:pam_auth" "missing"
 [ -f "$STATE/coordinator.md" ] && pass "agent:coordinator_prompt" "$STATE/coordinator.md" || warn "agent:coordinator_prompt" "missing"
+[ -f "$HERE/create-agent.sh" ] && pass "agent:create" "$HERE/create-agent.sh" || warn "agent:create" "missing create-agent.sh"
 [ -f "$STATE/reviewer.md" ] && pass "agent:reviewer_prompt" "$STATE/reviewer.md" || fail "agent:reviewer_prompt" "missing"
 pam_service="${DASHBOARD_PAM_SERVICE:-login}"
 if [ -f "/etc/pam.d/$pam_service" ]; then pass "pam:service" "/etc/pam.d/$pam_service"; else fail "pam:service" "/etc/pam.d/$pam_service missing"; fi

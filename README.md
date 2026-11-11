@@ -79,6 +79,11 @@ every session start, so `/new` does not fall back to pi's global default.
 ./dispatch.sh backender  "Add the endpoint; report commit and tests."
 ./dispatch.sh reviewer   "Review commit <sha>; run the tests." --wait
 ./dispatch.sh frontender "Wire the new endpoint; verify on web."
+
+# extra agent whose name says what it does; records its own predefined model
+./create-agent.sh api-migrations \
+  --cwd "$PWD/backend" --purpose "Write and verify DB migrations for the backend" \
+  --model openrouter/deepseek/deepseek-v4.1-flash-1017
 ```
 
 ## Dashboard
