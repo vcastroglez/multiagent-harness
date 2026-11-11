@@ -180,7 +180,7 @@ herdr agent read <pane> --source visible --lines 40
 - It is a plain markdown file at the harness root. Nothing executes it; it is a
   coordination artifact.
 - It is **not tracked**: `bootstrap.sh` creates it from the tracked
-  `tasks.example.md` on first run, and `.gitignore` ignores it. Edit the example
+  `tasks_template.md` on first run, and `.gitignore` ignores it. Edit the template
   to change the default sections.
 - Format: `##` section headings and `- [ ]` / `- [x]` checkbox lines. Indented
   continuation lines are the task's detail and appear in the dashboard pop-up.
@@ -313,7 +313,7 @@ under `MAH_REQUIRE_SERVER=1` it refuses to spawn a second herdr server.
 | `systemd/mah-*.service` | unit templates (`@HARNESS@`, `@WORKSPACE@`, ...) |
 | `coordinator.md` | coordination-only system prompt |
 | `reviewer.md` | read-only audit prompt |
-| `tasks.example.md` | tracked queue template (copied to git-ignored `tasks.md`) |
+| `tasks_template.md` | tracked queue template (copied to git-ignored `tasks.md`) |
 | `pi-extensions/` | optional queue-guard extension + test |
 
 Runtime logs: `journalctl --user -u mah-herdr -u mah-agents -u mah-dashboard`, or

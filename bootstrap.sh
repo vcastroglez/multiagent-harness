@@ -225,9 +225,13 @@ print(json.dumps({r: {"pane": v["pane"], "call_sign": v["call_sign"], "agent": v
                   for r, v in agents.items()}, indent=2))
 PY
 
-# seed the queue on first run
+# seed the queue on first run (tasks.md itself is git-ignored)
 if [ ! -f "$HERE/tasks.md" ]; then
-  printf '# Task queue\n\nNo tasks queued.\n' >"$HERE/tasks.md"
+  if [ -f "$HERE/tasks_template.md" ]; then
+    cp "$HERE/tasks_template.md" "$HERE/tasks.md"
+  else
+    printf '# Task queue\n\nNo tasks queued.\n' >"$HERE/tasks.md"
+  fi
 fi
 
 # ---------- optional dashboard ----------

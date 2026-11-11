@@ -27,5 +27,5 @@ id_ecdsa
 *.sql.gz
 *.sql.bz2
 
-# generated task queue (use tasks.example.md as the template)
+# generated task queue (use tasks_template.md as the template)
 /tasks.md
