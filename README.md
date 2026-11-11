@@ -163,7 +163,7 @@ them as separate programs, so their licenses govern your use of those tools:
   <https://github.com/herdrdev/herdr> · [LICENSE](https://github.com/herdrdev/herdr/blob/master/LICENSE)
 - **pi** — MIT License. Copyright (c) 2025 Mario Zechner.
   <https://github.com/earendil-works/pi> · [LICENSE](https://github.com/earendil-works/pi/blob/main/LICENSE)
-- **Node.js** — its own license; see <https://nodejs.org/en/about/previous-releases>.
+- **Node.js** — its own license; see <https://github.com/nodejs/node/blob/main/LICENSE>.
 
 If you redistribute herdr or pi, include their license and notice files and
 mark modified files. Apache-2.0 does not grant trademark rights in the Herdr
