@@ -116,11 +116,12 @@
   #img-overlay img { max-width:92vw; max-height:90vh; border-radius:10px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
   #confirm-overlay { z-index:60; }
   #task-overlay { z-index:55; }
-  .task-card { width:min(760px,100%); max-height:82vh; display:flex; flex-direction:column; }
+  .task-card { width:min(760px,100%); max-width:calc(100vw - 48px); max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; resize:both; }
   .task-card h2 { font-family:var(--mono); font-size:12px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); }
   .task-card .task-meta { margin:0 0 10px; font-size:12px; }
   .task-card .task-full { flex:1; min-height:60px; margin:0 0 16px; padding:10px 12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; color:var(--text); font:12.5px/1.5 var(--mono); white-space:pre-wrap; overflow:auto; text-align:left; }
-  .confirm-card { width:min(460px,100%); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:20px 22px; box-shadow:0 24px 80px rgba(0,0,0,.6); }
+  .confirm-card { width:min(460px,100%); max-width:calc(100vw - 48px); max-height:calc(100vh - 48px); background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:20px 22px; box-shadow:0 24px 80px rgba(0,0,0,.6); overflow:auto; resize:both; }
+  .confirm-card.task-card { width:min(760px,100%); overflow:hidden; }
   .confirm-card h2 { margin:0 0 8px; font-size:15px; }
   .confirm-card p { margin:0 0 18px; color:var(--muted); font-size:13px; line-height:1.5; }
   .confirm-card .row { justify-content:flex-end; }
@@ -180,7 +181,7 @@
   .task.done span.t { color:var(--muted); text-decoration:line-through; text-decoration-color:#30363d; }
   .overlay { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; padding:24px; z-index:20; }
   .overlay.show { display:flex; }
-  .modal { background:var(--panel); border:1px solid var(--border); border-radius:12px; width:min(1200px,100%); height:88vh; display:flex; flex-direction:column; overflow:hidden; }
+  .modal { background:var(--panel); border:1px solid var(--border); border-radius:12px; width:min(1200px,100%); max-width:calc(100vw - 48px); height:88vh; max-height:calc(100vh - 48px); display:flex; flex-direction:column; overflow:hidden; resize:both; }
   .modal header { position:static; background:var(--panel); padding:10px 14px; gap:10px; }
   .modal header h2 { font-size:14px; margin:0; font-family:var(--mono); }
   .modal header .check { white-space:nowrap; }
@@ -346,7 +347,7 @@
   <div class="overlay" id="img-overlay"><img id="img-full" alt="Pasted screenshot preview"></div>
 
   <div class="overlay" id="task-overlay" role="dialog" aria-modal="true" aria-labelledby="task-title" aria-describedby="task-full">
-    <div class="confirm-card task-card">
+    <div class="confirm-card task-card" id="task-card">
       <h2 id="task-title">Task</h2>
       <p class="task-meta" id="task-meta"></p>
       <pre class="task-full" id="task-full"></pre>
@@ -357,7 +358,7 @@
   </div>
 
   <div class="overlay" id="confirm-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text">
-    <div class="confirm-card">
+    <div class="confirm-card" id="confirm-card">
       <h2 id="confirm-title">Are you sure?</h2>
       <p id="confirm-text"></p>
       <div class="row">
@@ -368,7 +369,7 @@
   </div>
 
   <div class="overlay" id="overlay">
-    <div class="modal">
+    <div class="modal" id="tail-modal">
       <header>
         <h2 id="tail-title">live</h2>
         <span class="badge" id="tail-status">connecting</span>
@@ -1367,6 +1368,36 @@
     const h = Math.round(liveBody.getBoundingClientRect().height);
     if (h > 0) localStorage.setItem(LS.liveHeight, String(h));
   }).observe(liveBody);
+
+  // ---------- resizable dialogs ----------
+  // The native bottom-right grip is enabled in CSS; remember the chosen size so the
+  // tail, task and confirm pop-ups reopen at the width/height the user picked.
+  const DIALOG_GAP = 48; // .overlay padding: 24px on each side
+  function makeResizable(el, key) {
+    if (!el) return;
+    const maxW = Math.max(240, window.innerWidth - DIALOG_GAP);
+    const maxH = Math.max(160, window.innerHeight - DIALOG_GAP);
+    try {
+      const saved = JSON.parse(localStorage.getItem(key) || 'null');
+      if (saved && Number.isFinite(saved.w) && Number.isFinite(saved.h)) {
+        el.style.width = Math.max(240, Math.min(saved.w, maxW)) + 'px';
+        el.style.height = Math.max(160, Math.min(saved.h, maxH)) + 'px';
+      }
+    } catch { /* corrupt value: keep the CSS default */ }
+    let timer = null;
+    let last = null;
+    new ResizeObserver(() => {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      last = { w: Math.round(r.width), h: Math.round(r.height) };
+      clearTimeout(timer);
+      // Capture the size now (while visible), then debounce the write.
+      timer = setTimeout(() => { if (last) localStorage.setItem(key, JSON.stringify(last)); }, 200);
+    }).observe(el);
+  }
+  makeResizable($('tail-modal'), 'mah.dialog.tail');
+  makeResizable($('task-card'), 'mah.dialog.task');
+  makeResizable($('confirm-card'), 'mah.dialog.confirm');
 
   // ---------- actions ----------
 
