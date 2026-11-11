@@ -59,10 +59,16 @@
   }
   .agents { display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); align-content:start; }
   .card { position:relative; background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px; display:flex; flex-direction:column; gap:10px; }
-  .card h2 { margin:0; font-size:15px; display:flex; align-items:center; gap:8px; padding-right:26px; } /* room for the delete button */
-  /* top-right delete button: closes the agent's pane/tab */
-  .card-del { position:absolute; top:8px; right:8px; width:24px; height:24px; padding:0; display:flex; align-items:center; justify-content:center; font-size:15px; line-height:1; border-radius:7px; border-color:transparent; background:transparent; color:var(--muted); }
-  .card-del:hover:not(:disabled) { color:var(--bad); border-color:var(--bad); background:var(--panel2); }
+  .card h2 { margin:0; font-size:15px; display:flex; align-items:center; gap:8px; padding-right:58px; } /* room for collapse + delete */
+  .card.compact { gap:8px; padding:10px 12px; }
+  .card.compact h2 { padding-right:0; font-size:14px; }
+  /* top-right actions: collapse details and (for live agents) close the pane/tab */
+  .card-actions { position:absolute; top:8px; right:8px; display:flex; gap:6px; z-index:1; }
+  .card-actions button { width:24px; height:24px; padding:0; display:flex; align-items:center; justify-content:center; font-size:15px; line-height:1; border-radius:7px; border-color:transparent; background:transparent; color:var(--muted); }
+  .card-actions button:hover:not(:disabled) { color:var(--text); border-color:var(--accent); background:var(--panel2); }
+  .card-actions .card-del:hover:not(:disabled) { color:var(--bad); border-color:var(--bad); }
+  .card.compact .card-actions, .card.compact .card-body { display:none; }
+  .card.expanded .card-compact { display:none; }
   .badge { font-size:11px; padding:1px 7px; border-radius:999px; border:1px solid var(--border); color:var(--muted); font-weight:500; text-transform:uppercase; letter-spacing:.4px; }
   .badge.working { color:var(--warn); border-color:var(--warn); }
   .badge.idle { color:var(--ok); border-color:var(--ok); }
@@ -394,7 +400,7 @@
   let models = [];
   let modelsLoaded = false;
   let pendingImages = [];
-  const LS = { wait: 'mah.waitIdle', target: 'mah.target', thinking: 'mah.showThinking', sidebar: 'mah.sidebarCollapsed', liveHeight: 'mah.liveHeight' };
+  const LS = { wait: 'mah.waitIdle', target: 'mah.target', thinking: 'mah.showThinking', sidebar: 'mah.sidebarCollapsed', liveHeight: 'mah.liveHeight', agentExpanded: 'mah.agentExpanded' };
   let draftPane = null;
   let draftTimer = null;
   const targetKey = () => `mah.target.${me ? me.username : 'anon'}`;
@@ -1015,6 +1021,18 @@
     render();
   }
 
+  // Agent cards are compact by default; the expand/collapse choice is remembered per pane.
+  const expandedPanes = new Set();
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS.agentExpanded) || '[]');
+    if (Array.isArray(saved)) for (const pane of saved) expandedPanes.add(pane);
+  } catch { /* corrupt value: start compact */ }
+  function setPaneExpanded(pane, expanded) {
+    if (!pane) return;
+    if (expanded) expandedPanes.add(pane); else expandedPanes.delete(pane);
+    localStorage.setItem(LS.agentExpanded, JSON.stringify([...expandedPanes]));
+  }
+
   function renderAgents(s) {
     const order = { coordinator: 0, backender: 1, reviewer: 2, frontender: 3 };
     const panes = [...s.panes].sort((a, b) => (order[a.role] ?? 9) - (order[b.role] ?? 9));
@@ -1030,33 +1048,44 @@
       const delTitle = canDelete
         ? `Delete the ${p.role} agent (closes its pane/tab)`
         : 'Cannot delete the last agent: a live agent is the only way to create new ones';
-      return `<article class="card" data-pane="${esc(p.pane_id)}">
-        <h2>${esc(p.role)} <span class="badge ${esc(p.status)}">${esc(p.status)}</span>${p.agent
-          ? `<button class="card-del" data-del="${esc(p.pane_id)}" data-role="${esc(p.role)}" title="${esc(delTitle)}" aria-label="Delete the ${esc(p.role)} agent" ${canDelete ? '' : 'disabled'}>×</button>`
-          : ''}</h2>
-        ${hint}
-        <dl class="kv">
-          <dt>call-sign</dt><dd>${esc((s.memory.agents?.[p.role]?.call_sign) || '–')}</dd>
-          <dt>pane</dt><dd>${esc(p.pane_id)}</dd>
-          <dt>agent</dt><dd>${esc(p.agent || 'shell')}</dd>
-          <dt>cwd</dt><dd><button class="open-dir" data-explore="${esc(p.cwd)}" title="Browse ${esc(p.cwd)} in a new tab">${esc(p.cwd.replace(/^.*\/html\//, ''))}</button></dd>
-          ${p.repo ? `<dt>branch</dt><dd title="${esc(p.repo.last_commit)}">${esc(p.repo.branch)}${p.repo.dirty ? ` · ${p.repo.dirty} dirty` : ''}</dd>` : ''}
-        </dl>
-        ${p.agent ? `<div class="model-line">
-          <span class="lbl">model</span>
-          <div class="model-picker" data-model-picker="${esc(p.pane_id)}" data-model-current="${esc(p.model || '')}">
-            <button class="model-trigger" data-model-open="${esc(p.pane_id)}" data-role="${esc(p.role)}" aria-haspopup="listbox" aria-expanded="false" title="${esc(p.model || 'Select a model')}" ${canChangeModel ? '' : 'disabled'}>
-              <span class="model-label">${esc(p.model || 'Select model')}</span><span class="chev">▾</span>
-            </button>
-            <div class="model-popover" hidden></div>
-          </div>
-        </div>` : ''}
-        <div class="row">
-          <button data-tail="${esc(p.pane_id)}" data-role="${esc(p.role)}" ${p.agent ? '' : 'disabled'}>Tail</button>
+      const isExpanded = expandedPanes.has(p.pane_id);
+      return `<article class="card ${isExpanded ? 'expanded' : 'compact'}" data-pane="${esc(p.pane_id)}">
+        <h2>${esc(p.role)} <span class="badge ${esc(p.status)}">${esc(p.status)}</span></h2>
+        <div class="card-actions">
+          <button class="card-collapse" type="button" data-collapse="${esc(p.pane_id)}" title="Collapse details" aria-label="Collapse ${esc(p.role)} details">▴</button>
+          ${p.agent
+            ? `<button class="card-del" data-del="${esc(p.pane_id)}" data-role="${esc(p.role)}" title="${esc(delTitle)}" aria-label="Delete the ${esc(p.role)} agent" ${canDelete ? '' : 'disabled'}>×</button>`
+            : ''}
+        </div>
+        <div class="row card-compact">
           <button data-focus="${esc(p.pane_id)}" ${p.agent ? '' : 'disabled'} title="Select this agent and focus the message box">Focus</button>
-          ${working
-            ? `<button data-stop="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" title="Interrupt the running turn (sends Esc)">Stop</button>`
-            : `<button data-reset="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" ${p.agent ? '' : 'disabled'}>Reset</button>`}
+          <button type="button" data-expand="${esc(p.pane_id)}" aria-expanded="${isExpanded}" title="Show details" aria-label="Expand ${esc(p.role)} details">Expand</button>
+        </div>
+        <div class="card-body">
+          ${hint}
+          <dl class="kv">
+            <dt>call-sign</dt><dd>${esc((s.memory.agents?.[p.role]?.call_sign) || '–')}</dd>
+            <dt>pane</dt><dd>${esc(p.pane_id)}</dd>
+            <dt>agent</dt><dd>${esc(p.agent || 'shell')}</dd>
+            <dt>cwd</dt><dd><button class="open-dir" data-explore="${esc(p.cwd)}" title="Browse ${esc(p.cwd)} in a new tab">${esc(p.cwd.replace(/^.*\/html\//, ''))}</button></dd>
+            ${p.repo ? `<dt>branch</dt><dd title="${esc(p.repo.last_commit)}">${esc(p.repo.branch)}${p.repo.dirty ? ` · ${p.repo.dirty} dirty` : ''}</dd>` : ''}
+          </dl>
+          ${p.agent ? `<div class="model-line">
+            <span class="lbl">model</span>
+            <div class="model-picker" data-model-picker="${esc(p.pane_id)}" data-model-current="${esc(p.model || '')}">
+              <button class="model-trigger" data-model-open="${esc(p.pane_id)}" data-role="${esc(p.role)}" aria-haspopup="listbox" aria-expanded="false" title="${esc(p.model || 'Select a model')}" ${canChangeModel ? '' : 'disabled'}>
+                <span class="model-label">${esc(p.model || 'Select model')}</span><span class="chev">▾</span>
+              </button>
+              <div class="model-popover" hidden></div>
+            </div>
+          </div>` : ''}
+          <div class="row">
+            <button data-tail="${esc(p.pane_id)}" data-role="${esc(p.role)}" ${p.agent ? '' : 'disabled'}>Tail</button>
+            <button data-focus="${esc(p.pane_id)}" ${p.agent ? '' : 'disabled'} title="Select this agent and focus the message box">Focus</button>
+            ${working
+              ? `<button data-stop="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" title="Interrupt the running turn (sends Esc)">Stop</button>`
+              : `<button data-reset="${esc(p.pane_id)}" data-role="${esc(p.role)}" class="danger" ${p.agent ? '' : 'disabled'}>Reset</button>`}
+          </div>
         </div>
       </article>`;
     }).join('');
@@ -1706,6 +1735,19 @@
   });
 
   document.addEventListener('click', (ev) => {
+    const x = ev.target.closest('[data-expand], [data-collapse]');
+    if (x) {
+      const card = x.closest('.card');
+      if (card) {
+        const expand = card.classList.contains('compact');
+        card.classList.toggle('compact', !expand);
+        card.classList.toggle('expanded', expand);
+        setPaneExpanded(card.dataset.pane, expand);
+        const btn = card.querySelector('[data-expand]');
+        if (btn) btn.setAttribute('aria-expanded', String(expand));
+      }
+      return;
+    }
     const t = ev.target.closest('[data-tail]');
     if (t) return openTail(t.dataset.tail, t.dataset.role);
     const p = ev.target.closest('[data-focus]');
