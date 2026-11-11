@@ -83,9 +83,9 @@ the backender and then back to the reviewer.
 - **Prompt** dispatch with optional “wait for idle”
 - per-agent **Reset** (`/new`) and **Stop** (interrupts the running turn)
 - **Reset all agents**
-- task queue rendered from `tasks.md`; click a task to read its full text
-  (including wrapped continuation lines) in a pop-up; **Clear** archives the
-  queue first
+- task queue rendered from `tasks.md` (created from `tasks.example.md` on first
+  bootstrap and git-ignored); click a task to read its full text (including
+  wrapped continuation lines) in a pop-up; **Clear** archives the queue first
 - searchable **model picker**
 - screenshot paste (validated, stored under `uploads/`, pruned)
 - per-card **× delete** (disabled when it is the last agent)
@@ -131,7 +131,7 @@ preflight.sh          read-only prerequisite/state checker
 dispatch.sh           role -> pane resolver; prompt via msg or herdr
 coordinator.md        coordination-only system prompt
 reviewer.md           read-only audit prompt
-tasks.md              shared queue (rendered by the dashboard)
+tasks.example.md      queue template (copied to git-ignored tasks.md on first run)
 THIRD_PARTY_NOTICES.md  third-party licenses and attributions
 web/                  zero-dependency dashboard (Node + static pages)
 systemd/              user unit templates + installer
@@ -150,9 +150,11 @@ excludes `.env` files, API keys, tokens, TOTP secrets, `auth-state.json`,
 `.gitignore`. The dashboard writes runtime state to `MAH_STATE_DIR` (default:
 the harness root) and those files are ignored.
 
-`tasks.md` **is** tracked: keep deployment details and credentials out of it.
-If a secret is ever committed, rotate it first, then rewrite history — deleting
-it in a later commit does not remove it from Git.
+`tasks.md` is **not tracked**; it is created from `tasks.example.md` on first
+bootstrap and ignored by Git. Keep deployment details and credentials out of it
+anyway, because it may be shared or archived. If a secret is ever committed,
+rotate it first, then rewrite history — deleting it in a later commit does not
+remove it from Git.
 
 ## Licenses and third-party notices
 
